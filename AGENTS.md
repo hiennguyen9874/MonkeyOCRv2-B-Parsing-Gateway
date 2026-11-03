@@ -1,3 +1,9 @@
+# Gateway to serve MonkeyOCRv2-B-Parsing same api as paddleocr api
+
+## Docs
+
+- docs/paddleocr-api.md: paddleocr api schema
+
 ## Models
 
 - models/MonkeyOCRv2-B-Parsing
