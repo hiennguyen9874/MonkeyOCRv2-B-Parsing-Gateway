@@ -1,17 +1,31 @@
-# Gateway to serve MonkeyOCRv2-B-Parsing same api as paddleocr api
+# MonkeyOCRv2-B-Parsing Gateway
+
+A FastAPI gateway that serves the PaddleOCR-VL `/layout-parsing` contract in front of a vLLM server running MonkeyOCRv2-B-Parsing. PaddleOCR-VL clients, WeKnora first, can switch engines without code changes. It supports both two-stage and end-to-end parsing; see `GLOSSARY.md`.
+
+## Work
+
+- The spec is GitHub issue #1. The tickets are #2–#11 and use native blocked-by links. Take a ticket from the frontier: one whose blockers are all closed.
+- A ticket is done when every acceptance criterion is checked, with evidence from the test seams below.
+
+## Contract
+
+- WeKnora is the acceptance target. `docs/weknora-call-api.md` lists what it sends and what it reads. Read it before changing request handling or the response shape.
+- `docs/paddleocr-api.md` describes the PaddleOCR-VL HTTP schema.
+
+## Invariants
+
+- Upstream (`references/MonkeyOCRv2` at `106914e`) is the authority for prompts, output parsing, cropping, and token/pixel limits. Port its helpers with the source revision noted and add a parity test. The gateway itself stays free of torch and GPUs (ADR-0003).
+- Tests use two seams: (1) the gateway HTTP API running in-process against a fake OpenAI-compatible vLLM that replays recorded Monkey output, and (2) parity tests on the ported helpers. Real GPU runs belong only to the manual smoke script.
+- Outputs from the sibling `legal-vi-ocr` repo contain sensitive documents. Read them to learn the shape. Build fixtures here only from synthetic or public material.
+
+## Setup
+
+- `git submodule update --init` checks out `references/` at the pinned revisions.
+- `models/` is gitignored. Download the Hugging Face repo `zenosai/MonkeyOCRv2-B-Parsing` into `models/MonkeyOCRv2-B-Parsing`. Upstream's `download_model.py` writes to its own `model_weight/` directory instead.
 
 ## Docs
 
-- docs/paddleocr-api.md: paddleocr api schema
-
-## Models
-
-- models/MonkeyOCRv2-B-Parsing
-
-## References
-
-- references/MonkeyOCRv2
-- references/PADDLEOCR
+- `docs/agents/references.md`: read it when you need upstream behaviour, PaddleOCR schema details, WeKnora client code, or the legal-vi-ocr two-stage runner.
 
 ## Agent skills
 
