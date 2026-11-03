@@ -1,0 +1,21 @@
+[project]
+name = "monkeyocr-gateway"
+version = "0.1.0"
+description = "PaddleOCR-VL /layout-parsing gateway in front of a vLLM server running MonkeyOCRv2-B-Parsing"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi",
+    "httpx",
+    "pillow",
+    "uvicorn",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

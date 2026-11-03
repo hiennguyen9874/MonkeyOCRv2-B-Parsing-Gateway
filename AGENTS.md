@@ -21,6 +21,7 @@ A FastAPI gateway that serves the PaddleOCR-VL `/layout-parsing` contract in fro
 ## Setup
 
 - `git submodule update --init` checks out `references/` at the pinned revisions.
+- `uv sync` installs the gateway (Python 3.12). `uv run pytest` runs both test seams. `uv run uvicorn --factory monkeyocr_gateway.app:create_app` starts the gateway; `MOCR2_SERVER_URL` and `MOCR2_SERVED_MODEL_NAME` point it at vLLM.
 - `models/` is gitignored. Download the Hugging Face repo `zenosai/MonkeyOCRv2-B-Parsing` into `models/MonkeyOCRv2-B-Parsing`. Upstream's `download_model.py` writes to its own `model_weight/` directory instead.
 
 ## Docs

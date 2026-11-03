@@ -1,0 +1,1 @@
+[{"bbox": [100, 50, 900, 120], "label": "Title", "content": "Quy chế mẫu về bảo mật dữ liệu"}, {"bbox": [100, 150, 900, 400], "label": "Text", "content": "Điều 1. Văn bản này là dữ liệu tổng hợp, chỉ dùng để kiểm thử gateway. "}, {"bbox": [80, 950, 920, 980], "label": "Page-footer", "content": "Trang 1"}]
