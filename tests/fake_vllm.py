@@ -3,7 +3,7 @@
 Answers are chosen by the prompt text, so a test controls what the "model"
 returns for each Upstream prompt and can inspect every payload it received.
 An answer may also be a callable taking the request image; it runs on the
-server's handler thread, so it can sleep to make responses finish out of order.
+server's handler thread, so tests can coordinate out-of-order responses.
 """
 
 from __future__ import annotations
@@ -40,6 +40,7 @@ class FakeVLLM:
         self.requests: list[dict] = []
         # Payloads in the order their responses were sent.
         self.completed: list[dict] = []
+        self.completed_condition = threading.Condition()
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -59,8 +60,10 @@ class FakeVLLM:
                 self.send_header("Content-Type", "application/json")
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
-                self.wfile.write(body)
-                fake.completed.append(payload)
+                with fake.completed_condition:
+                    self.wfile.write(body)
+                    fake.completed.append(payload)
+                    fake.completed_condition.notify_all()
 
             def log_message(self, *_args):
                 return

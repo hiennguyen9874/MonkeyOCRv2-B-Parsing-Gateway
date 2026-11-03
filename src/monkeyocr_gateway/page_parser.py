@@ -55,8 +55,16 @@ async def _parse_two_stage(image: Image.Image, vllm: VLLMClient) -> list[dict]:
             return ""
         return await vllm.chat(task["image"], task["question"], max_tokens=RECOGNITION_MAX_TOKENS)
 
-    # gather keeps layout order whatever order the responses arrive in.
-    raws = await asyncio.gather(*(recognize(task) for task in tasks))
+    recognitions = [asyncio.create_task(recognize(task)) for task in tasks]
+    try:
+        # gather keeps layout order whatever order the responses arrive in.
+        raws = await asyncio.gather(*recognitions)
+    except BaseException:
+        # Preserve the original error while cancelling and draining sibling calls.
+        for recognition in recognitions:
+            recognition.cancel()
+        await asyncio.gather(*recognitions, return_exceptions=True)
+        raise
     return [
         {"bbox": task["bbox"], "label": task["label"], "content": (raw or "").strip()}
         for task, raw in zip(tasks, raws)

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import time
-
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image, ImageChops, ImageDraw
@@ -23,7 +21,7 @@ from monkeyocr_gateway.app import create_app
 PAGE_SIZE = (1240, 1754)
 
 # Khối of layout_synthetic_page.txt in layout order, with their bboxes worked out
-# by hand from 0-1000 model space into PAGE_SIZE pixels. Each region is painted a
+# by hand from 0-1000 model space into PAGE_SIZE pixels. Each Khối is painted a
 # unique colour so the fake model can tell which crop it received.
 BLOCKS = [
     {"label": "Title", "bbox": [124, 88, 1116, 210], "color": (200, 0, 0)},
@@ -49,9 +47,6 @@ CONTENT_BY_LABEL = {
     "Table": "<fcel>A<fcel>B<nl><fcel>1<fcel>2<nl>",
     "Page-footer": "Trang 1",
 }
-# The first Khối answer last, so responses finish out of layout order.
-DELAY_BY_LABEL = {"Title": 0.4, "Text": 0.2}
-
 
 def _painted_page(size=PAGE_SIZE) -> Image.Image:
     page = Image.new("RGB", size, "white")
@@ -62,7 +57,7 @@ def _painted_page(size=PAGE_SIZE) -> Image.Image:
     return page
 
 
-def _block_of(image: Image.Image) -> dict:
+def _khối_of(image: Image.Image) -> dict:
     return BY_COLOR[image.convert("RGB").getpixel((0, 0))]
 
 
@@ -71,7 +66,6 @@ def _recognize(image: Image.Image) -> str:
     if block is None:  # crop of an unpainted page
         return ""
     label = block["label"]
-    time.sleep(DELAY_BY_LABEL.get(label, 0))
     # Trailing whitespace checks that raw output is stripped, as Upstream does.
     return CONTENT_BY_LABEL[label] + "\n"
 
@@ -102,7 +96,7 @@ def _first_page(response) -> dict:
     return response.json()["result"]["layoutParsingResults"][0]
 
 
-def test_two_stage_sends_one_layout_request_then_one_recognition_per_prompted_block(gateway, fake_vllm):
+def test_two_stage_sends_one_layout_request_then_one_recognition_per_prompted_khối(gateway, fake_vllm):
     page = _painted_page()
     _first_page(_post(gateway, page, vlmExtraArgs={"parsingMode": "two-stage"}))
 
@@ -117,7 +111,7 @@ def test_two_stage_sends_one_layout_request_then_one_recognition_per_prompted_bl
         assert payload["max_tokens"] == 5000
         assert payload["temperature"] == 0
         crop = request_image(payload)
-        block = _block_of(crop)
+        block = _khối_of(crop)
         assert request_prompt(payload) == PROMPT_BY_LABEL[block["label"]]
         # Cropped from the full-resolution page, not from the resized layout image.
         expected = page.crop(block["bbox"])
@@ -128,10 +122,28 @@ def test_two_stage_sends_one_layout_request_then_one_recognition_per_prompted_bl
 
 
 def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_order(gateway, fake_vllm):
+    def finished_labels():
+        return [_khối_of(request_image(p))["label"] for p in fake_vllm.completed[1:]]
+
+    def recognize_out_of_order(image):
+        label = _khối_of(image)["label"]
+        prerequisites = {
+            "Text": {"Formula", "Table", "Page-footer"},
+            "Title": {"Text"},
+        }.get(label, set())
+        with fake_vllm.completed_condition:
+            assert fake_vllm.completed_condition.wait_for(
+                lambda: prerequisites.issubset(finished_labels()), timeout=5
+            ), f"Recognition stalled waiting for {prerequisites}"
+        return _recognize(image)
+
+    for prompt in (TEXT_PROMPT, FORMULA_PROMPT, TABLE_PROMPT):
+        fake_vllm.answers[prompt] = recognize_out_of_order
+
     result = _first_page(_post(gateway, vlmExtraArgs={"parsingMode": "two-stage"}))
 
-    finished = [_block_of(request_image(p))["label"] for p in fake_vllm.completed[1:]]
-    assert finished[-2:] == ["Text", "Title"]  # recognition really was out of order
+    with fake_vllm.completed_condition:
+        assert finished_labels()[-2:] == ["Text", "Title"]
 
     pruned = result["prunedResult"]
     assert (pruned["width"], pruned["height"]) == PAGE_SIZE
@@ -144,7 +156,7 @@ def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_or
     ]
 
 
-def test_blocks_without_a_prompt_keep_their_bbox_with_empty_content_and_no_request(gateway, fake_vllm):
+def test_khối_without_a_prompt_keep_their_bbox_with_empty_content_and_no_request(gateway, fake_vllm):
     result = _first_page(_post(gateway, vlmExtraArgs={"parsingMode": "two-stage"}))
 
     items = {item["block_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
@@ -152,7 +164,7 @@ def test_blocks_without_a_prompt_keep_their_bbox_with_empty_content_and_no_reque
     assert items["Picture"]["block_content"] == ""
     assert items["Footnote"]["block_bbox"] == [124, 1491, 1116, 1579]
     assert items["Footnote"]["block_content"] == ""
-    recognized = {_block_of(request_image(r["payload"]))["label"] for r in fake_vllm.requests[1:]}
+    recognized = {_khối_of(request_image(r["payload"]))["label"] for r in fake_vllm.requests[1:]}
     assert recognized.isdisjoint({"Picture", "Footnote"})
 
 
