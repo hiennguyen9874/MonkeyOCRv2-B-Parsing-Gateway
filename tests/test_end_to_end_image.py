@@ -42,31 +42,34 @@ def test_image_returns_one_page_result_in_paddle_envelope(gateway):
     assert (pruned["width"], pruned["height"]) == PAGE_SIZE
     assert pruned["parsing_res_list"] == [
         {
-            "block_label": "Title",
+            "block_label": "doc_title",
+            "monkey_label": "Title",
             "block_content": "Quy chế mẫu về bảo mật dữ liệu",
             "block_bbox": [124, 88, 1116, 210],
             "block_id": 0,
             "block_order": 1,
         },
         {
-            "block_label": "Text",
+            "block_label": "text",
+            "monkey_label": "Text",
             "block_content": "Điều 1. Văn bản này là dữ liệu tổng hợp, chỉ dùng để kiểm thử gateway.",
             "block_bbox": [124, 263, 1116, 702],
             "block_id": 1,
             "block_order": 2,
         },
         {
-            "block_label": "Page-footer",
+            "block_label": "footer",
+            "monkey_label": "Page-footer",
             "block_content": "Trang 1",
             "block_bbox": [99, 1666, 1141, 1719],
             "block_id": 2,
             "block_order": 3,
         },
     ]
+    # The footer is in Paddle's default markdownIgnoreLabels.
     assert pages[0]["markdown"]["text"] == (
-        "Quy chế mẫu về bảo mật dữ liệu\n\n"
-        "Điều 1. Văn bản này là dữ liệu tổng hợp, chỉ dùng để kiểm thử gateway.\n\n"
-        "Trang 1"
+        "# Quy chế mẫu về bảo mật dữ liệu\n\n"
+        "Điều 1. Văn bản này là dữ liệu tổng hợp, chỉ dùng để kiểm thử gateway."
     )
 
 

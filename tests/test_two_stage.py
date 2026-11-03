@@ -147,11 +147,13 @@ def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_or
 
     pruned = result["prunedResult"]
     assert (pruned["width"], pruned["height"]) == PAGE_SIZE
+    # Table content is formatted to HTML (tests/test_paddle_format.py covers formatting).
+    formatted = {**CONTENT_BY_LABEL, "Table": "<table><tr><td>A</td><td>B</td></tr><tr><td>1</td><td>2</td></tr></table>"}
     assert [
-        (item["block_label"], item["block_bbox"], item["block_content"], item["block_id"], item["block_order"])
+        (item["monkey_label"], item["block_bbox"], item["block_content"], item["block_id"], item["block_order"])
         for item in pruned["parsing_res_list"]
     ] == [
-        (block["label"], block["bbox"], CONTENT_BY_LABEL.get(block["label"], ""), index, index + 1)
+        (block["label"], block["bbox"], formatted.get(block["label"], ""), index, index + 1)
         for index, block in enumerate(BLOCKS)
     ]
 
@@ -159,7 +161,7 @@ def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_or
 def test_khối_without_a_prompt_keep_their_bbox_with_empty_content_and_no_request(gateway, fake_vllm):
     result = _first_page(_post(gateway, vlmExtraArgs={"parsingMode": "two-stage"}))
 
-    items = {item["block_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
+    items = {item["monkey_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
     assert items["Picture"]["block_bbox"] == [372, 1421, 868, 1473]
     assert items["Picture"]["block_content"] == ""
     assert items["Footnote"]["block_bbox"] == [124, 1491, 1116, 1579]

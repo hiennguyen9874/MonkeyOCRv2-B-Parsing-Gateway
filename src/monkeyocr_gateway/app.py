@@ -16,7 +16,7 @@ from pydantic import BaseModel, ConfigDict
 from .config import PARSING_MODES, Settings
 from .document_loader import load_pages
 from .page_parser import parse_page
-from .paddle_response import build_page_result
+from .paddle_response import DEFAULT_MARKDOWN_IGNORE_LABELS, build_page_result
 from .vllm_client import VLLMClient
 
 
@@ -28,6 +28,7 @@ class LayoutParsingRequest(BaseModel):
     fileType: int | None = None
     logId: str | None = None
     vlmExtraArgs: dict | None = None
+    markdownIgnoreLabels: list[str] | None = None
 
 
 def _new_log_id() -> str:
@@ -74,7 +75,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page = pages[0]
         blocks = await parse_page(page, mode, app.state.vllm)
         width, height = page.size
-        model_settings = {"parsing_mode": mode}
+        markdown_ignore_labels = body.markdownIgnoreLabels
+        if markdown_ignore_labels is None:
+            markdown_ignore_labels = DEFAULT_MARKDOWN_IGNORE_LABELS
+        model_settings = {"markdown_ignore_labels": markdown_ignore_labels, "parsing_mode": mode}
         return {
             "logId": log_id,
             "errorCode": 0,

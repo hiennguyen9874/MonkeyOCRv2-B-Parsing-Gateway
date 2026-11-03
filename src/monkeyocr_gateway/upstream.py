@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import ast
 import base64
+import re
 from io import BytesIO
 
 from PIL import Image, ImageOps
@@ -241,6 +242,220 @@ def parse_end2end_output(text: str, image_size: tuple[int, int]) -> tuple[list[d
         })
         layouts.append({"bbox": bbox, "label": label})
     return records, layouts
+
+
+def otsl_to_html(otsl_str):
+    """core_runner.otsl_to_html"""
+    if not otsl_str or not otsl_str.strip():
+        return "<table></table>"
+    if re.search(r'<otsl>', otsl_str, flags=re.I):
+        return re.sub(
+            r'<otsl>(.*?)</otsl>',
+            lambda match: otsl_to_html(match.group(1)),
+            otsl_str,
+            flags=re.I | re.S,
+        )
+    
+    rows_tokens = otsl_str.split("<nl>")
+    if rows_tokens and rows_tokens[-1] == "":
+        rows_tokens.pop()
+    
+    grid = []
+    
+    for r_idx, row_str in enumerate(rows_tokens):
+        if not row_str.strip():
+            if r_idx >= len(grid):
+                grid.append([])
+            continue
+        
+        # Only OTSL control tags are tokens. Other markup (e.g. <br> or a
+        # nested <table>) is cell content and must remain untouched.
+        parts = re.findall(
+            r'<(fcel|ecel|lcel|ucel|xcel|nl)>(.*?)(?=<(?:fcel|ecel|lcel|ucel|xcel|nl)>|\Z)',
+            row_str, flags=re.DOTALL | re.IGNORECASE,
+        )
+        
+        if r_idx >= len(grid):
+            grid.append([])
+        
+        col_idx = 0
+        
+        for tag, content in parts:
+            while True:
+                while len(grid[r_idx]) <= col_idx:
+                    grid[r_idx].append(None)
+                
+                if grid[r_idx][col_idx] is not None:
+                    col_idx += 1
+                else:
+                    break
+            
+            if tag == 'fcel' or tag == 'ecel':
+                # Do not normalize whitespace. Decode the private OTSL escape
+                # used by html2otsl for literal control-looking tags.
+                text = content.replace("\ue100\ue100", "\ue100")
+                text = re.sub(r"\ue100(fcel|ecel|lcel|ucel|xcel|nl)>", r"<\1>", text, flags=re.I)
+                if tag == 'ecel':
+                    text = ""
+                grid[r_idx][col_idx] = {
+                    'text': text,
+                    'rowspan': 1,
+                    'colspan': 1,
+                    'valid': True
+                }
+                col_idx += 1
+                
+            elif tag == 'lcel':
+                search_c = col_idx - 1
+                found = False
+                while search_c >= 0:
+                    if len(grid[r_idx]) > search_c:
+                        cell = grid[r_idx][search_c]
+                        if cell and cell.get('valid'):
+                            cell['colspan'] += 1
+                            found = True
+                            break
+                    search_c -= 1
+                
+                if found:
+                    grid[r_idx][col_idx] = {'valid': False, 'type': 'lcel'}
+                else:
+                    grid[r_idx][col_idx] = {
+                        'text': '',
+                        'rowspan': 1,
+                        'colspan': 1,
+                        'valid': True
+                    }
+                col_idx += 1
+                
+            elif tag == 'ucel':
+                search_r = r_idx - 1
+                found = False
+                while search_r >= 0:
+                    if len(grid[search_r]) > col_idx:
+                        cell = grid[search_r][col_idx]
+                        if cell and cell.get('valid'):
+                            cell['rowspan'] += 1
+                            found = True
+                            break
+                    search_r -= 1
+                
+                if found:
+                    grid[r_idx][col_idx] = {'valid': False, 'type': 'ucel'}
+                else:
+                    grid[r_idx][col_idx] = {
+                        'text': '',
+                        'rowspan': 1,
+                        'colspan': 1,
+                        'valid': True
+                    }
+                col_idx += 1
+                
+            elif tag == 'xcel':
+                grid[r_idx][col_idx] = {'valid': False, 'type': 'xcel'}
+                col_idx += 1
+            else:
+                col_idx += 1
+    
+    html_parts = ['<table>']
+    
+    for row in grid:
+        html_parts.append('<tr>')
+        for cell in row:
+            if cell is None:
+                continue
+            elif cell.get('valid'):
+                attrs = []
+                if cell['rowspan'] > 1:
+                    attrs.append(f'rowspan="{cell["rowspan"]}"')
+                if cell['colspan'] > 1:
+                    attrs.append(f'colspan="{cell["colspan"]}"')
+                
+                attr_str = ' ' + ' '.join(attrs) if attrs else ''
+                # Cell content is already serialized HTML from html2otsl;
+                # preserve tags, entities and leading/trailing whitespace.
+                raw_text = cell['text'].replace('\r\n', '\n').replace('\r', '\n')
+                # Preserve embedded HTML tags/entities while escaping plain
+                # text, and represent OTSL text newlines as HTML line breaks.
+                chunks = re.split(r'(<[A-Za-z][^>]*>)', raw_text)
+                rendered = []
+                for i, chunk in enumerate(chunks):
+                    if i % 2:
+                        rendered.append('<br>' if re.fullmatch(r'<br\s*/?>', chunk, flags=re.I) else chunk)
+                    else:
+                        chunk = re.sub(r'&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);)', '&amp;', chunk)
+                        chunk = chunk.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#x27;')
+                        rendered.append(chunk.replace('\n', '<br>'))
+                text = ''.join(rendered)
+                html_parts.append(f'<td{attr_str}>{text}</td>')
+        html_parts.append('</tr>')
+    
+    html_parts.append('</table>')
+    return ''.join(html_parts)
+
+
+def process_formula(content: str):
+    """core_runner.process_formula: returns (LaTeX, trailing equation number or None)."""
+    content = content.strip('$').strip()
+    # Collapse repeated \quad sequences (>=5).
+    content = re.sub(
+        r'(?:\\quad\s*){5,}',
+        r'\\quad ',
+        content
+    )
+
+    # Collapse repeated \qquad sequences (>=5).
+    content = re.sub(
+        r'(?:\\qquad\s*){5,}',
+        r'\\qquad ',
+        content
+    ).strip()
+
+    # Extract trailing (xxx). TODO: remove tag{}.
+    match = re.search(
+        r'(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$'
+        r'|\\tag\{([^{}]*)\}\s*$',
+        content
+    )
+
+    extracted = None
+    if match:
+        extracted = match.group(1)
+        content = content[:match.start()].rstrip()
+
+    begin_env = None
+    # Detect leading \begin{xx}.
+    begin_match = re.match(r'^\\begin\{([^\}]+)\}', content)
+    if begin_match:
+        begin_env = begin_match.group(1)
+        # Remove leading \begin{xx}.
+        content = content[begin_match.end():].lstrip()
+
+        # Detect whether the matching \end{xx} is at the end.
+        end_pattern = rf'\\end\{{{re.escape(begin_env)}\}}\s*$'
+        end_match = re.search(end_pattern, content)
+        if end_match:
+            # Remove trailing \end{xx}.
+            content = content[:end_match.start()].rstrip()
+
+
+    # Extract trailing (xxx).
+    match = re.search(
+        r'(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$'
+        r'|\\tag\{([^{}]*)\}\s*$',
+        content
+    )
+
+    if match:
+        extracted = match.group(1)
+        content = content[:match.start()].rstrip()
+
+    # ===== Restore begin/end =====
+
+    if begin_env:
+        content = f"\\begin{{{begin_env}}}\n{content}\n\\end{{{begin_env}}}"
+
+    return content, extracted
 
 
 def _apply_jpeg_orientation(img: Image.Image) -> Image.Image:

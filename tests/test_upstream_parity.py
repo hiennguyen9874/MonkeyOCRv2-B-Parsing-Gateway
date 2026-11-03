@@ -1,15 +1,18 @@
 """Parity with Upstream MonkeyOCRv2 helpers at revision 106914e.
 
 Cases are copied from references/MonkeyOCRv2/parsing/tests/test_model_output_parsing.py,
-test_bbox.py and the layout half of test_fake_model_pipeline.py /
+test_bbox.py, test_otsl_to_html.py and the layout half of test_fake_model_pipeline.py /
 test_fake_server_pipeline.py so that drift shows up when the pinned revision changes.
-The load_image cases have no Upstream test; their expected sizes are worked out
-by hand from Upstream's formula.
+The load_image and process_formula cases have no Upstream test; their expected
+values are worked out by hand from Upstream's code. otsl_to_html and
+process_formula are also run against the functions in Upstream's own source.
 """
 
 from __future__ import annotations
 
 import ast
+import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
@@ -20,8 +23,10 @@ from monkeyocr_gateway.upstream import (
     _build_page_tasks,
     _map_bbox_to_image,
     load_image,
+    otsl_to_html,
     parse_end2end_output,
     parse_layout_output,
+    process_formula,
 )
 
 CORE_RUNNER = Path(__file__).parents[1] / "references/MonkeyOCRv2/parsing/core_runner.py"
@@ -29,6 +34,20 @@ CORE_RUNNER = Path(__file__).parents[1] / "references/MonkeyOCRv2/parsing/core_r
 
 def _labels(records):
     return [item["label"] for item in records]
+
+
+def _upstream_source():
+    if not CORE_RUNNER.exists():
+        pytest.skip("references/MonkeyOCRv2 is not checked out (git submodule update --init)")
+    return ast.parse(CORE_RUNNER.read_text(encoding="utf-8"))
+
+
+def _upstream_function(name: str):
+    """Compile one pure function from Upstream's source; importing core_runner would pull in torch."""
+    node = next(n for n in _upstream_source().body if isinstance(n, ast.FunctionDef) and n.name == name)
+    namespace = {"re": re}
+    exec(compile(ast.Module(body=[node], type_ignores=[]), str(CORE_RUNNER), "exec"), namespace)
+    return namespace[name]
 
 
 # --- test_model_output_parsing.py -------------------------------------------
@@ -115,9 +134,7 @@ def test_invalid_items_are_skipped():
 
 def test_all_prompt_matches_upstream_source():
     # Read the literal from Upstream's source; importing it would pull in torch.
-    if not CORE_RUNNER.exists():
-        pytest.skip("references/MonkeyOCRv2 is not checked out (git submodule update --init)")
-    tree = ast.parse(CORE_RUNNER.read_text(encoding="utf-8"))
+    tree = _upstream_source()
     upstream = next(
         ast.literal_eval(node.value)
         for node in tree.body
@@ -198,6 +215,164 @@ def test_build_page_tasks_clamps_pixel_bboxes():
     assert tasks[1]["bbox"] == [5, 5, 6, 6]
     assert tasks[0]["image"].size == (10, 10)
     assert tasks[1]["image"].size == (1, 1)
+
+
+# --- test_otsl_to_html.py --------------------------------------------------
+
+
+class _TableParser(HTMLParser):
+    """Upstream tests/html_table.py: collects tags and cell texts."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.tags: list[str] = []
+        self.cell_texts: list[str] = []
+        self._in_td = False
+        self._buf: list[str] = []
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+        if tag == "td":
+            self._in_td = True
+            self._buf = []
+
+    def handle_endtag(self, tag):
+        if tag == "td" and self._in_td:
+            self.cell_texts.append("".join(self._buf))
+            self._in_td = False
+            self._buf = []
+
+    def handle_data(self, data):
+        if self._in_td:
+            self._buf.append(data)
+
+
+def _parse_table(html: str) -> _TableParser:
+    assert html.startswith("<table>"), html
+    assert html.endswith("</table>"), html
+    parser = _TableParser()
+    parser.feed(html)
+    parser.close()
+    assert parser.tags[0] == "table"
+    return parser
+
+
+def test_empty_otsl_returns_empty_table():
+    assert otsl_to_html("") == "<table></table>"
+    assert otsl_to_html("   ") == "<table></table>"
+    assert otsl_to_html(None) == "<table></table>"
+
+
+def test_basic_2x2_table():
+    html = otsl_to_html("<fcel>A<fcel>B<nl><fcel>C<fcel>D<nl>")
+    assert html == (
+        "<table><tr><td>A</td><td>B</td></tr>"
+        "<tr><td>C</td><td>D</td></tr></table>"
+    )
+    assert _parse_table(html).cell_texts == ["A", "B", "C", "D"]
+
+
+def test_row_split_across_newlines_issue_24():
+    html = otsl_to_html("<fcel>line1\nline2<fcel>B<nl>")
+    assert html == "<table><tr><td>line1<br>line2</td><td>B</td></tr></table>"
+    _parse_table(html)
+
+
+def test_crlf_in_cell_becomes_br():
+    html = otsl_to_html("<fcel>line1\r\nline2<nl>")
+    assert html == "<table><tr><td>line1<br>line2</td></tr></table>"
+
+
+def test_colspan_from_lcel_tokens():
+    html = otsl_to_html("<fcel>Head<lcel><lcel><nl><fcel>A<fcel>B<fcel>C<nl>")
+    assert html == (
+        '<table><tr><td colspan="3">Head</td></tr>'
+        "<tr><td>A</td><td>B</td><td>C</td></tr></table>"
+    )
+
+
+def test_rowspan_from_ucel_tokens():
+    html = otsl_to_html("<fcel>Side<fcel>A<nl><ucel><fcel>B<nl>")
+    assert html == (
+        '<table><tr><td rowspan="2">Side</td><td>A</td></tr>'
+        "<tr><td>B</td></tr></table>"
+    )
+
+
+def test_rowspan_and_colspan_with_xcel():
+    html = otsl_to_html("<fcel>Big<lcel><fcel>A<nl><ucel><xcel><fcel>B<nl>")
+    assert html == (
+        '<table><tr><td rowspan="2" colspan="2">Big</td><td>A</td></tr>'
+        "<tr><td>B</td></tr></table>"
+    )
+
+
+def test_empty_cell_token():
+    html = otsl_to_html("<fcel>A<ecel><fcel>B<nl>")
+    assert html == "<table><tr><td>A</td><td></td><td>B</td></tr></table>"
+
+
+MALFORMED_OTSL = [
+    "<nl>",
+    "<fcel>A",
+    "<zzzz>nope<fcel>ok<nl>",
+    "notags just text",
+    "<fcel>A<lcel><ucel><xcel><nl>",
+    "<fcel>",
+    "<<<>>>",
+    "<fcel>A<nl><nl><fcel>B<nl>",
+]
+
+
+@pytest.mark.parametrize("otsl", MALFORMED_OTSL)
+def test_malformed_otsl_does_not_raise_and_returns_table(otsl):
+    _parse_table(otsl_to_html(otsl))
+
+
+def test_html_special_characters_are_escaped():
+    html = otsl_to_html("<fcel>A&B<\"'><nl>")
+    assert html == "<table><tr><td>A&amp;B&lt;&quot;&#x27;&gt;</td></tr></table>"
+
+
+OTSL_CASES = MALFORMED_OTSL + [
+    "",
+    "<fcel>A&B<\"'><nl>",
+    "<fcel>Big<lcel><fcel>A<nl><ucel><xcel><fcel>B<nl>",
+    "<fcel>a<br/>b &amp; <b>c</b><fcel>\ue100fcel>lit<nl>",
+    "<otsl><fcel>A<nl></otsl> trailing <otsl><fcel>B<nl></otsl>",
+]
+
+
+@pytest.mark.parametrize("otsl", OTSL_CASES)
+def test_otsl_to_html_matches_upstream_source(otsl):
+    assert otsl_to_html(otsl) == _upstream_function("otsl_to_html")(otsl)
+
+
+# --- process_formula ----------------------------------------------------------
+
+FORMULA_CASES = [
+    ("$$x^2$$", ("x^2", None)),
+    ("E = m c^{2} \\quad (1)", ("E = m c^{2}", "1")),
+    # Upstream reads only group(1), so a \tag number is dropped, not returned.
+    ("a + b \\tag{3}", ("a + b", None)),
+    ("x \\quad \\quad \\quad \\quad \\quad y", ("x \\quad y", None)),
+    (
+        "\\begin{aligned} a &= b \\\\ c &= d \\end{aligned} \\qquad (2)",
+        ("\\begin{aligned}\na &= b \\\\ c &= d\n\\end{aligned}", "2"),
+    ),
+    ("\\begin{cases} x \\eqno (4) \\end{cases}", ("\\begin{cases}\nx\n\\end{cases}", "4")),
+    ("", ("", None)),
+]
+
+
+@pytest.mark.parametrize(("raw", "expected"), FORMULA_CASES)
+def test_process_formula(raw, expected):
+    assert process_formula(raw) == expected
+
+
+@pytest.mark.parametrize(("raw", "_expected"), FORMULA_CASES)
+def test_process_formula_matches_upstream_source(raw, _expected):
+    assert process_formula(raw) == _upstream_function("process_formula")(raw)
 
 
 # --- load_image request resizing --------------------------------------------
