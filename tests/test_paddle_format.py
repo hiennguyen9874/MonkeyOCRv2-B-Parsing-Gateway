@@ -57,7 +57,7 @@ EXTRA = [
 
 # PaddleOCR-VL serving default (prettifyMarkdown=true): PaddleX format_image_scaled_by_html
 # wrapped by format_centered_by_html; width is the bbox share of the page width.
-PICTURE_PATH = "imgs/img_in_image_box_300_550_700_700.jpg"
+PICTURE_PATH = "imgs/page_1/img_in_image_box_300_550_700_700.jpg"
 PICTURE_MARKDOWN = f'<div style="text-align: center;"><img src="{PICTURE_PATH}" alt="Image" width="40%" /></div>'
 TABLE_HTML = '<table><tr><td colspan="2">Mục</td></tr><tr><td>A&amp;B</td><td>2</td></tr></table>'
 EXPECTED = {

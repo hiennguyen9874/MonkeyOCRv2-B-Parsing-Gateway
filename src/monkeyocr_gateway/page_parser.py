@@ -35,7 +35,6 @@ async def parse_page(image: Image.Image, mode: str, vllm: VLLMClient) -> list[di
     """mode is one of config.PARSING_MODES.
 
     Returns Khối in reading order as {"bbox": [x1, y1, x2, y2] page pixels, "label", "content"}.
-    Picture Khối also carry "crop": the bbox region of the full-resolution page image.
     """
     if mode == "end-to-end":
         return await _parse_end_to_end(image, vllm)
@@ -47,7 +46,7 @@ async def _parse_end_to_end(image: Image.Image, vllm: VLLMClient) -> list[dict]:
     raw = await vllm.chat(image, ALL_PROMPT["END2END"])  # Upstream sets no max_tokens here
     records, _layouts = parse_end2end_output(raw, image.size)
     return [
-        _khoi(record["bbox"], record["label"], record["content"], image)
+        {"bbox": record["bbox"], "label": record["label"], "content": record["content"]}
         for record in records
     ]
 
@@ -71,14 +70,6 @@ async def _parse_two_stage(image: Image.Image, vllm: VLLMClient) -> list[dict]:
 
     raws = await gather_or_cancel([recognize(task) for task in tasks])
     return [
-        _khoi(task["bbox"], task["label"], (raw or "").strip(), image)
+        {"bbox": task["bbox"], "label": task["label"], "content": (raw or "").strip()}
         for task, raw in zip(tasks, raws)
     ]
-
-
-def _khoi(bbox: list[int], label: str, content: str, page: Image.Image) -> dict:
-    block = {"bbox": bbox, "label": label, "content": content}
-    if label == "Picture":
-        # bbox is already clamped to integer page pixels by the Upstream helpers.
-        block["crop"] = page.crop(tuple(bbox))
-    return block

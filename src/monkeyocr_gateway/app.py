@@ -137,12 +137,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except DocumentError as exc:
             return _error_response(log_id, exc.status_code, str(exc))
 
+        markdown_ignore_labels = body.markdownIgnoreLabels
+        if markdown_ignore_labels is None:
+            markdown_ignore_labels = DEFAULT_MARKDOWN_IGNORE_LABELS
+        model_settings = {"markdown_ignore_labels": markdown_ignore_labels, "parsing_mode": mode}
+        # As in PaddleOCR-VL, page_count is set for PDF input only.
+        page_count = document.page_count if document.kind == "pdf" else None
         semaphore = asyncio.Semaphore(settings.page_concurrency)
 
         async def parse(index: int):
             async with semaphore:
                 image = await asyncio.to_thread(document.page, index)
-                return image.size, await parse_page(image, mode, app.state.vllm)
+                blocks = await parse_page(image, mode, app.state.vllm)
+                # Crop and encode before releasing the page concurrency slot.
+                return await asyncio.to_thread(
+                    build_page_result, image, blocks, model_settings, page_count,
+                    index, body.returnMarkdownImages,
+                )
 
         try:
             pages = await gather_or_cancel([parse(index) for index in range(document.page_count)])
@@ -151,37 +162,25 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             await asyncio.to_thread(document.close)
 
-        markdown_ignore_labels = body.markdownIgnoreLabels
-        if markdown_ignore_labels is None:
-            markdown_ignore_labels = DEFAULT_MARKDOWN_IGNORE_LABELS
-        model_settings = {"markdown_ignore_labels": markdown_ignore_labels, "parsing_mode": mode}
-        # As in PaddleOCR-VL, page_count is set for PDF input only.
-        page_count = document.page_count if document.kind == "pdf" else None
         if document.kind == "pdf":
             data_info = {
                 "type": "pdf",
                 "numPages": document.page_count,
-                "pages": [{"width": width, "height": height} for (width, height), _ in pages],
+                "pages": [
+                    {"width": page["prunedResult"]["width"], "height": page["prunedResult"]["height"]}
+                    for page in pages
+                ],
             }
         else:
             # A multi-frame TIFF is described by its first frame.
-            width, height = pages[0][0]
-            data_info = {"type": "image", "width": width, "height": height}
-        # Off the event loop: Picture crops are JPEG-encoded here.
-        layout_parsing_results = await asyncio.to_thread(
-            lambda: [
-                build_page_result(
-                    width, height, blocks, model_settings, page_count, body.returnMarkdownImages
-                )
-                for (width, height), blocks in pages
-            ]
-        )
+            first_page = pages[0]["prunedResult"]
+            data_info = {"type": "image", "width": first_page["width"], "height": first_page["height"]}
         return {
             "logId": log_id,
             "errorCode": 0,
             "errorMsg": "Success",
             "result": {
-                "layoutParsingResults": layout_parsing_results,
+                "layoutParsingResults": pages,
                 "dataInfo": data_info,
             },
         }

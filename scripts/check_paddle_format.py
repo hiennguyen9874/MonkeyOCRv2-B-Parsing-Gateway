@@ -12,6 +12,7 @@ def main():
     parser.add_argument("--model", type=Path, required=True)
     parser.add_argument("--layout", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--picture", action="store_true", help="Include a synthetic landscape")
     args = parser.parse_args()
     os.environ["HF_HUB_OFFLINE"] = "1"
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
@@ -35,6 +36,12 @@ def main():
     draw.text((1360, 675), "(1)", font=body, fill="black")
     draw.text((140, 950), "1.1 Explanation", font=heading, fill="black")
     draw.text((140, 1060), "Energy equals mass times the square of the speed of light.", font=body, fill="black")
+    if args.picture:
+        draw.rectangle((300, 1250, 1300, 1800), fill="#75bfff")
+        draw.ellipse((1050, 1300, 1200, 1450), fill="#ffda42")
+        draw.polygon([(300, 1700), (650, 1350), (1000, 1800), (300, 1800)], fill="#506b8a")
+        draw.polygon([(600, 1800), (1000, 1450), (1300, 1750), (1300, 1800)], fill="#6a8860")
+        draw.rectangle((300, 1750, 1300, 1800), fill="#38865a")
     image_path = args.output / "input.png"
     image.save(image_path)
 
@@ -58,12 +65,20 @@ def main():
         json.dumps(raw, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
     )
     (args.output / "markdown.md").write_text(markdown["markdown_texts"], encoding="utf-8")
+    if args.picture:
+        assert markdown["markdown_images"], "No image in Paddle Markdown"
+        for path, crop in markdown["markdown_images"].items():
+            destination = args.output / path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            crop.save(destination)
     versions = {name: importlib.metadata.version(name) for name in
                 ("paddleocr", "paddlex", "transformers", "torch", "pillow")}
     (args.output / "versions.json").write_text(
         json.dumps(versions, indent=2) + "\n", encoding="utf-8"
     )
     labels = {block["block_label"] for block in raw["res"]["parsing_res_list"]}
+    if args.picture:
+        assert "image" in labels, f"No image detected: {labels}"
     assert labels & {"formula", "display_formula"}, f"No formula detected: {labels}"
     assert "doc_title" in labels, f"No document title detected: {labels}"
     assert "paragraph_title" in labels, f"No section heading detected: {labels}"

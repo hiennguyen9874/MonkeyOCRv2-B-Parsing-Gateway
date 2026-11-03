@@ -83,15 +83,15 @@ def _jpeg_base64(image: Image.Image) -> str:
 
 
 def build_page_result(
-    width: int,
-    height: int,
+    page: Image.Image,
     blocks: list[dict],
     model_settings: dict,
     page_count: int | None,
-    return_markdown_images: bool = True,
+    page_index: int,
+    return_markdown_images: bool,
 ) -> dict:
     """blocks are page_parser Khối in reading order: {"bbox", "label" (Nhãn Monkey),
-    "content" (raw), "crop" (Picture only)}.
+    "content" (raw)}. Picture crops come from the full-resolution page here.
 
     page_count is the PDF page count, or None for image input, as in PaddleOCR-VL.
 
@@ -102,6 +102,7 @@ def build_page_result(
     that the Markdown references. markdown.images holds only referenced crops; with
     return_markdown_images False it is None and the Markdown has no image reference.
     """
+    width, height = page.size
     markdown_ignore_labels = model_settings["markdown_ignore_labels"]
     parsing_res_list = []
     fragments = []
@@ -109,10 +110,12 @@ def build_page_result(
     for index, block in enumerate(blocks):
         label = PADDLE_LABELS.get(block["label"], block["label"])
         content, markdown = _format_block(label, block["content"])
-        if block.get("crop") is not None and images is not None and label not in markdown_ignore_labels:
+        if block["label"] == "Picture" and images is not None and label not in markdown_ignore_labels:
             x1, y1, x2, y2 = block["bbox"]
-            path = f"imgs/img_in_{label}_box_{x1}_{y1}_{x2}_{y2}.jpg"
-            images[path] = _jpeg_base64(block["crop"])
+            # WeKnora merges page image maps, so bbox-only paths would collide.
+            path = f"imgs/page_{page_index + 1}/img_in_{label}_box_{x1}_{y1}_{x2}_{y2}.jpg"
+            with page.crop(tuple(block["bbox"])) as crop:
+                images[path] = _jpeg_base64(crop)
             markdown = _image_markdown(path, block["bbox"], width)
         parsing_res_list.append({
             "block_label": label,
