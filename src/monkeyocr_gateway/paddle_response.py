@@ -64,8 +64,12 @@ def _format_block(label: str, raw: str) -> tuple[str, str]:
     return raw, raw
 
 
-def build_page_result(width: int, height: int, blocks: list[dict], model_settings: dict) -> dict:
+def build_page_result(
+    width: int, height: int, blocks: list[dict], model_settings: dict, page_count: int | None
+) -> dict:
     """blocks are page_parser Khối in reading order: {"bbox", "label" (Nhãn Monkey), "content" (raw)}.
+
+    page_count is the PDF page count, or None for image input, as in PaddleOCR-VL.
 
     As in PaddleOCR-VL, model_settings["markdown_ignore_labels"] drops Khối from
     the Markdown only; they stay in parsing_res_list.
@@ -88,6 +92,7 @@ def build_page_result(width: int, height: int, blocks: list[dict], model_setting
             fragments.append(markdown)
     return {
         "prunedResult": {
+            "page_count": page_count,
             "width": width,
             "height": height,
             "model_settings": model_settings,

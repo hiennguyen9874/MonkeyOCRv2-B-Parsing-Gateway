@@ -41,12 +41,18 @@ class FakeVLLM:
         # Payloads in the order their responses were sent.
         self.completed: list[dict] = []
         self.completed_condition = threading.Condition()
+        # Requests received but not yet answered, and the highest such count seen.
+        self.in_flight = 0
+        self.max_in_flight = 0
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802 - stdlib handler API
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append({"path": self.path, "payload": payload})
+                with fake.completed_condition:
+                    fake.in_flight += 1
+                    fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
                 answer = fake.answers[request_prompt(payload)]
                 if callable(answer):
                     answer = answer(request_image(payload))
@@ -62,6 +68,7 @@ class FakeVLLM:
                 self.end_headers()
                 with fake.completed_condition:
                     self.wfile.write(body)
+                    fake.in_flight -= 1
                     fake.completed.append(payload)
                     fake.completed_condition.notify_all()
 

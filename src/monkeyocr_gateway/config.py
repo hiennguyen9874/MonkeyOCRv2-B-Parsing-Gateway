@@ -16,6 +16,11 @@ class Settings:
     max_pixels: int
     request_timeout: float
     default_parsing_mode: str
+    # Pages of one request parsed in parallel.
+    page_concurrency: int = 8
+    # 0 means no limit.
+    max_pages: int = 0
+    max_body_bytes: int = 100 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -32,4 +37,7 @@ class Settings:
             max_pixels=int(os.getenv("MOCR2_MAX_PIXELS", "1003520")),
             request_timeout=float(os.getenv("MOCR2_REQUEST_TIMEOUT", "300")),
             default_parsing_mode=default_parsing_mode,
+            page_concurrency=int(os.getenv("MOCR2_PAGE_CONCURRENCY", "8")),
+            max_pages=int(os.getenv("MOCR2_MAX_PAGES", "0")),
+            max_body_bytes=int(os.getenv("MOCR2_MAX_BODY_BYTES", str(100 * 1024 * 1024))),
         )

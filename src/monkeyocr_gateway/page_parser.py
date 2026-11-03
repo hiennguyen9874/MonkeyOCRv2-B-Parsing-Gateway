@@ -18,6 +18,19 @@ from .upstream import (
 from .vllm_client import VLLMClient
 
 
+async def gather_or_cancel(coroutines) -> list:
+    """Results in input order whatever order they finish in. On the first error,
+    cancel and drain the others, then re-raise that error unchanged."""
+    tasks = [asyncio.create_task(coroutine) for coroutine in coroutines]
+    try:
+        return await asyncio.gather(*tasks)
+    except BaseException:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        raise
+
+
 async def parse_page(image: Image.Image, mode: str, vllm: VLLMClient) -> list[dict]:
     """mode is one of config.PARSING_MODES.
 
@@ -55,16 +68,7 @@ async def _parse_two_stage(image: Image.Image, vllm: VLLMClient) -> list[dict]:
             return ""
         return await vllm.chat(task["image"], task["question"], max_tokens=RECOGNITION_MAX_TOKENS)
 
-    recognitions = [asyncio.create_task(recognize(task)) for task in tasks]
-    try:
-        # gather keeps layout order whatever order the responses arrive in.
-        raws = await asyncio.gather(*recognitions)
-    except BaseException:
-        # Preserve the original error while cancelling and draining sibling calls.
-        for recognition in recognitions:
-            recognition.cancel()
-        await asyncio.gather(*recognitions, return_exceptions=True)
-        raise
+    raws = await gather_or_cancel([recognize(task) for task in tasks])
     return [
         {"bbox": task["bbox"], "label": task["label"], "content": (raw or "").strip()}
         for task, raw in zip(tasks, raws)
