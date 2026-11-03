@@ -1,0 +1,6 @@
+[submodule "references/PADDLEOCR"]
+	path = references/PADDLEOCR
+	url = git@github.com:PADDLEPADDLE/PADDLEOCR.git
+[submodule "references/MonkeyOCRv2"]
+	path = references/MonkeyOCRv2
+	url = https://github.com/hiennguyen9874/MonkeyOCRv2.git
