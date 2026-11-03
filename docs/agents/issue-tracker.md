@@ -1,7 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and specs live in GitHub Issues for this repository. Use the `gh` CLI;
-it infers the repository from the Git remote.
+Issues and specs live in GitHub Issues for this repository. Use the `gh` CLI; it infers the repository from the Git remote.
 
 - Create: `gh issue create --title "..." --body "..."`
 - Read: `gh issue view <number> --comments`; also fetch labels.
