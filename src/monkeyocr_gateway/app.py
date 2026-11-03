@@ -29,6 +29,7 @@ class LayoutParsingRequest(BaseModel):
     logId: str | None = None
     vlmExtraArgs: dict | None = None
     markdownIgnoreLabels: list[str] | None = None
+    returnMarkdownImages: bool = True
 
 
 def _new_log_id() -> str:
@@ -166,15 +167,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             # A multi-frame TIFF is described by its first frame.
             width, height = pages[0][0]
             data_info = {"type": "image", "width": width, "height": height}
+        # Off the event loop: Picture crops are JPEG-encoded here.
+        layout_parsing_results = await asyncio.to_thread(
+            lambda: [
+                build_page_result(
+                    width, height, blocks, model_settings, page_count, body.returnMarkdownImages
+                )
+                for (width, height), blocks in pages
+            ]
+        )
         return {
             "logId": log_id,
             "errorCode": 0,
             "errorMsg": "Success",
             "result": {
-                "layoutParsingResults": [
-                    build_page_result(width, height, blocks, model_settings, page_count)
-                    for (width, height), blocks in pages
-                ],
+                "layoutParsingResults": layout_parsing_results,
                 "dataInfo": data_info,
             },
         }

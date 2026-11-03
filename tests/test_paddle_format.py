@@ -6,7 +6,9 @@ markdownIgnoreLabels, checked through the HTTP API against fake vLLM.
 
 from __future__ import annotations
 
+import base64
 import json
+from io import BytesIO
 
 import pytest
 from PIL import Image, ImageDraw
@@ -53,6 +55,10 @@ EXTRA = [
     {"label": "Checkbox", "bbox": [0, 850, 100, 880], "raw": "x"},  # not in the mapping
 ]
 
+# PaddleOCR-VL serving default (prettifyMarkdown=true): PaddleX format_image_scaled_by_html
+# wrapped by format_centered_by_html; width is the bbox share of the page width.
+PICTURE_PATH = "imgs/img_in_image_box_300_550_700_700.jpg"
+PICTURE_MARKDOWN = f'<div style="text-align: center;"><img src="{PICTURE_PATH}" alt="Image" width="40%" /></div>'
 TABLE_HTML = '<table><tr><td colspan="2">Mục</td></tr><tr><td>A&amp;B</td><td>2</td></tr></table>'
 EXPECTED = {
     # monkey_label: (block_label, block_content, Markdown fragment)
@@ -64,7 +70,7 @@ EXPECTED = {
     "Formula": ("formula", "E = m c^{2}", "$$\nE = m c^{2}\n$$\n1"),
     "Table": ("table", TABLE_HTML, TABLE_HTML),
     "Caption": ("figure_title", "Bảng 1. Ví dụ", "Bảng 1. Ví dụ"),
-    "Picture": ("image", "", None),
+    "Picture": ("image", "", PICTURE_MARKDOWN),
     "Page-header": ("header", "Văn bản mẫu", "Văn bản mẫu"),
     "Page-footer": ("footer", "Trang 1", "Trang 1"),
     "Footnote": ("footnote", "(1) Chú thích mẫu.", "(1) Chú thích mẫu."),
@@ -189,5 +195,44 @@ def test_both_modes_give_the_same_format_for_the_same_khối(gateway):
     e2e_items = end_to_end["prunedResult"]["parsing_res_list"][: len(SHARED)]
     assert two_stage["prunedResult"]["parsing_res_list"] == e2e_items
     assert [item["monkey_label"] for item in e2e_items] == shared_labels
-    assert two_stage["markdown"] == {"text": _markdown(shared_labels, []), "images": {}}
+    assert two_stage["markdown"]["text"] == _markdown(shared_labels, [])
+    assert two_stage["markdown"]["images"] == end_to_end["markdown"]["images"]
     assert end_to_end["markdown"]["text"].startswith(two_stage["markdown"]["text"] + "\n\n")
+
+
+MODES = ["end-to-end", "two-stage"]
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_picture_is_cropped_into_markdown_images_and_referenced_from_markdown(gateway, mode):
+    result = _parse(gateway, mode)
+
+    images = result["markdown"]["images"]
+    assert list(images) == [PICTURE_PATH]
+    assert PICTURE_MARKDOWN in result["markdown"]["text"]
+    crop = Image.open(BytesIO(base64.b64decode(images[PICTURE_PATH])))
+    assert crop.format == "JPEG"
+    assert crop.size == (400, 150)  # the Picture bbox in page pixels
+    picture_color = next(b["color"] for b in SHARED if b["label"] == "Picture")
+    for x, y in [(0, 0), (399, 149), (200, 75)]:
+        assert all(abs(a - b) <= 8 for a, b in zip(crop.convert("RGB").getpixel((x, y)), picture_color))
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_return_markdown_images_false_returns_no_images_and_no_dangling_reference(gateway, mode):
+    result = _parse(gateway, mode, returnMarkdownImages=False)
+
+    assert result["markdown"].get("images") is None
+    assert "imgs/" not in result["markdown"]["text"]
+    picture = next(i for i in result["prunedResult"]["parsing_res_list"] if i["monkey_label"] == "Picture")
+    assert picture["block_content"] == ""
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_ignored_picture_is_left_out_of_markdown_and_images(gateway, mode):
+    result = _parse(gateway, mode, markdownIgnoreLabels=["image"])
+
+    assert "imgs/" not in result["markdown"]["text"]
+    assert result["markdown"]["images"] == {}
+    labels = [i["block_label"] for i in result["prunedResult"]["parsing_res_list"]]
+    assert "image" in labels
