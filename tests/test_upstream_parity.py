@@ -13,10 +13,14 @@ from __future__ import annotations
 import ast
 import re
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
 
+import pypdfium2 as pdfium
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
+
+from monkeyocr_gateway.document_loader import PDFIUM_LOCK, PdfDocument
 
 from monkeyocr_gateway.upstream import (
     ALL_PROMPT,
@@ -43,11 +47,43 @@ def _upstream_source():
 
 
 def _upstream_function(name: str):
-    """Compile one pure function from Upstream's source; importing core_runner would pull in torch."""
+    """Compile one helper from Upstream's source; importing core_runner would pull in torch."""
     node = next(n for n in _upstream_source().body if isinstance(n, ast.FunctionDef) and n.name == name)
-    namespace = {"re": re}
+    namespace = {"re": re, "Image": Image, "PDFIUM_LOCK": PDFIUM_LOCK}
     exec(compile(ast.Module(body=[node], type_ignores=[]), str(CORE_RUNNER), "exec"), namespace)
     return namespace[name]
+
+
+# --- _render_pdf_page at 106914e ---------------------------------------------
+
+
+def test_pdf_rendering_matches_upstream():
+    render = _upstream_function("_render_pdf_page")
+    images = []
+    for size, color in [((173, 251), "white"), ((317, 149), "yellow"), ((121, 193), "cyan")]:
+        image = Image.new("RGB", size, color)
+        draw = ImageDraw.Draw(image)
+        draw.rectangle((13, 19, 81, 103), fill="red")
+        draw.line((0, 0, size[0] - 1, size[1] - 1), fill="blue", width=3)
+        images.append(image)
+    buffer = BytesIO()
+    images[0].save(buffer, "PDF", save_all=True, append_images=images[1:], resolution=144)
+    data = buffer.getvalue()
+    document = PdfDocument(data)
+    try:
+        with PDFIUM_LOCK, pdfium.PdfDocument(data) as upstream_pdf:
+            for index in range(len(images)):
+                expected = render(upstream_pdf, index)
+                actual = document.page(index)
+                try:
+                    assert actual.mode == expected.mode == "RGB"
+                    assert actual.size == expected.size
+                    assert actual.tobytes() == expected.tobytes()
+                finally:
+                    actual.close()
+                    expected.close()
+    finally:
+        document.close()
 
 
 # --- test_model_output_parsing.py -------------------------------------------

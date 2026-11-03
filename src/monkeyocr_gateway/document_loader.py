@@ -41,15 +41,18 @@ class PdfDocument:
     def page(self, index: int) -> Image.Image:
         # Upstream core_runner._render_pdf_page at 106914e.
         with PDFIUM_LOCK:
-            page = self._pdf[index]
             try:
-                bitmap = page.render(scale=PDF_RENDER_SCALE)
+                page = self._pdf[index]
                 try:
-                    return bitmap.to_pil().convert("RGB")
+                    bitmap = page.render(scale=PDF_RENDER_SCALE)
+                    try:
+                        return bitmap.to_pil().convert("RGB")
+                    finally:
+                        bitmap.close()
                 finally:
-                    bitmap.close()
-            finally:
-                page.close()
+                    page.close()
+            except pdfium.PdfiumError as exc:
+                raise DocumentError(422, f"file is not a readable PDF: {exc}") from None
 
     def close(self) -> None:
         with PDFIUM_LOCK:
@@ -69,8 +72,11 @@ class ImageDocument:
 
     def page(self, index: int) -> Image.Image:
         with self._lock:
-            self._image.seek(index)
-            return _apply_jpeg_orientation(self._image).convert("RGB")
+            try:
+                self._image.seek(index)
+                return _apply_jpeg_orientation(self._image).convert("RGB")
+            except (OSError, EOFError, Image.DecompressionBombError) as exc:
+                raise DocumentError(422, f"file is not a readable image: {exc}") from None
 
     def close(self) -> None:
         with self._lock:
@@ -86,7 +92,7 @@ def open_document(file: str, file_type: int | None, max_pages: int | None) -> Pd
         raise DocumentError(422, f"Invalid fileType {file_type!r}; expected 0 (PDF), 1 (image) or null")
     try:
         data = base64.b64decode(file, validate=True)
-    except binascii.Error:
+    except (binascii.Error, ValueError):
         raise DocumentError(422, "file is not valid Base64") from None
     if not data:
         raise DocumentError(422, "file is empty after Base64 decoding")

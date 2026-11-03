@@ -184,6 +184,8 @@ def test_jpeg_exif_orientation_is_applied(fake_vllm):
         (image_base64(Image.new("RGB", (10, 10))), 0, ("PDF",)),
         (image_base64(Image.new("RGB", (10, 10))), 2, ("fileType",)),
         ("not base64!", 1, ("Base64",)),
+        ("é", 1, ("Base64",)),
+        ("你好", None, ("Base64",)),
         ("", None, ("Base64",)),
     ],
 )
@@ -194,6 +196,30 @@ def test_bad_input_is_422_without_calling_vllm(fake_vllm, file, file_type, words
     body = _error(response, 422, *words)
     assert body["logId"] == "client-log"
     assert fake_vllm.requests == []
+
+
+@pytest.mark.parametrize("file_type", [1, None])
+def test_truncated_image_is_422_and_next_request_succeeds(fake_vllm, file_type):
+    buffer = BytesIO()
+    Image.new("RGB", (32, 32)).save(buffer, "JPEG")
+    data = buffer.getvalue()
+    # Keep valid headers but remove the scan data, so opening succeeds and decoding fails.
+    scan = data.index(b"\xff\xda")
+    scan_end = scan + 2 + int.from_bytes(data[scan + 2:scan + 4], "big")
+    truncated = base64.b64encode(data[:scan_end]).decode("ascii")
+    with _client() as client:
+        response = _post(client, truncated, file_type, logId="corrupt-image")
+        body = _error(response, 422, "image")
+        assert body["logId"] == "corrupt-image"
+        assert fake_vllm.requests == []
+        assert _ok(_post(client, image_base64(_pages(1)[0]), 1))
+
+
+@pytest.mark.parametrize("concurrency", ["0", "-1"])
+def test_nonpositive_page_concurrency_is_rejected_at_startup(monkeypatch, concurrency):
+    monkeypatch.setenv("MOCR2_PAGE_CONCURRENCY", concurrency)
+    with pytest.raises(ValueError, match="MOCR2_PAGE_CONCURRENCY must be positive"):
+        create_app()
 
 
 @pytest.mark.parametrize(("env", "pages", "expected"), [(None, 10, 8), ("2", 6, 2)])

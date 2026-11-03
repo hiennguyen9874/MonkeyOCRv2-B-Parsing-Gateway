@@ -135,6 +135,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         try:
             pages = await gather_or_cancel([parse(index) for index in range(document.page_count)])
+        except DocumentError as exc:
+            return _error_response(log_id, exc.status_code, str(exc))
         finally:
             await asyncio.to_thread(document.close)
 

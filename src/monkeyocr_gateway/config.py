@@ -22,6 +22,10 @@ class Settings:
     max_pages: int = 0
     max_body_bytes: int = 100 * 1024 * 1024
 
+    def __post_init__(self) -> None:
+        if self.page_concurrency <= 0:
+            raise ValueError("MOCR2_PAGE_CONCURRENCY must be positive")
+
     @classmethod
     def from_env(cls) -> Settings:
         # Names and defaults follow Upstream's parsing/fastapi/main.py. Upstream
