@@ -9,7 +9,8 @@ import asyncio
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
@@ -17,11 +18,16 @@ from .config import PARSING_MODES, Settings
 from .document_loader import DocumentError, open_document
 from .page_parser import gather_or_cancel, parse_page
 from .paddle_response import DEFAULT_MARKDOWN_IGNORE_LABELS, build_page_result
-from .vllm_client import VLLMClient
+from .vllm_client import GenerationOptions, VLLMClient
+
+# Preprocessing changes the coordinate space of the result, so it is rejected
+# rather than ignored (ADR-0004).
+PREPROCESSING_FLAGS = ("useDocOrientationClassify", "useDocUnwarping")
 
 
 class LayoutParsingRequest(BaseModel):
-    # Other PaddleOCR-VL fields are accepted and ignored.
+    # Other PaddleOCR-VL fields (seal, chart, restructurePages, minPixels/maxPixels…)
+    # are accepted and not applied (ADR-0002).
     model_config = ConfigDict(extra="allow")
 
     file: str
@@ -30,6 +36,28 @@ class LayoutParsingRequest(BaseModel):
     vlmExtraArgs: dict | None = None
     markdownIgnoreLabels: list[str] | None = None
     returnMarkdownImages: bool = True
+    useDocOrientationClassify: bool | None = None
+    useDocUnwarping: bool | None = None
+    temperature: float | None = None
+    topP: float | None = None
+    repetitionPenalty: float | None = None
+    maxNewTokens: int | None = None
+
+
+def _model_settings(markdown_ignore_labels: list[str], mode: str) -> dict:
+    """What the gateway actually does, whatever the request asked for (ADR-0002)."""
+    return {
+        "use_doc_preprocessor": False,
+        "use_layout_detection": True,
+        "use_chart_recognition": False,
+        "use_seal_recognition": False,
+        "use_ocr_for_image_block": False,
+        "format_block_content": False,
+        "merge_layout_blocks": False,
+        "restructure_pages": False,
+        "markdown_ignore_labels": markdown_ignore_labels,
+        "parsing_mode": mode,
+    }
 
 
 def _new_log_id() -> str:
@@ -104,6 +132,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app = FastAPI(title="MonkeyOCRv2-B-Parsing Gateway", lifespan=lifespan)
     app.add_middleware(BodySizeLimit, max_bytes=settings.max_body_bytes)
 
+    @app.exception_handler(RequestValidationError)
+    async def validation_error(_request: Request, exc: RequestValidationError):
+        # Keep the client's logId when the body carries one, as for other errors.
+        log_id = exc.body.get("logId") if isinstance(exc.body, dict) else None
+        if not isinstance(log_id, str) or not log_id:
+            log_id = _new_log_id()
+        message = "; ".join(
+            f"{'.'.join(str(part) for part in error['loc'][1:]) or 'body'}: {error['msg']}"
+            for error in exc.errors()
+        )
+        return _error_response(log_id, 422, f"Invalid request: {message}")
+
     @app.get("/health")
     async def health():
         return {"logId": _new_log_id(), "errorCode": 0, "errorMsg": "Healthy"}
@@ -121,6 +161,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/layout-parsing")
     async def layout_parsing(body: LayoutParsingRequest):
         log_id = body.logId or _new_log_id()
+        for flag in PREPROCESSING_FLAGS:
+            if getattr(body, flag):
+                return _error_response(
+                    log_id,
+                    422,
+                    f"{flag}=true is not supported: document preprocessing would change the "
+                    "result coordinate space; send false or null",
+                )
         mode = (body.vlmExtraArgs or {}).get("parsingMode")
         if mode is None:
             mode = settings.default_parsing_mode
@@ -140,7 +188,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         markdown_ignore_labels = body.markdownIgnoreLabels
         if markdown_ignore_labels is None:
             markdown_ignore_labels = DEFAULT_MARKDOWN_IGNORE_LABELS
-        model_settings = {"markdown_ignore_labels": markdown_ignore_labels, "parsing_mode": mode}
+        model_settings = _model_settings(markdown_ignore_labels, mode)
+        options = GenerationOptions(
+            temperature=body.temperature,
+            top_p=body.topP,
+            repetition_penalty=body.repetitionPenalty,
+            max_new_tokens=body.maxNewTokens,
+        )
         # As in PaddleOCR-VL, page_count is set for PDF input only.
         page_count = document.page_count if document.kind == "pdf" else None
         semaphore = asyncio.Semaphore(settings.page_concurrency)
@@ -148,7 +202,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         async def parse(index: int):
             async with semaphore:
                 image = await asyncio.to_thread(document.page, index)
-                blocks = await parse_page(image, mode, app.state.vllm)
+                blocks = await parse_page(image, mode, app.state.vllm, options)
                 # Crop and encode before releasing the page concurrency slot.
                 return await asyncio.to_thread(
                     build_page_result, image, blocks, model_settings, page_count,

@@ -9,6 +9,7 @@ from PIL import Image
 
 from conftest import LAYOUT_PROMPT
 from monkeyocr_gateway.page_parser import parse_page
+from monkeyocr_gateway.vllm_client import GenerationOptions
 
 
 @pytest.mark.parametrize("failure", ["recognition", "request_cancelled"])
@@ -19,7 +20,7 @@ def test_two_stage_awaits_sibling_cancellation_before_returning(failure):
         error = RuntimeError("recognition failed")
 
         class Client:
-            async def chat(self, image, prompt, **kwargs):
+            async def chat(self, image, prompt, options, **kwargs):
                 if prompt == LAYOUT_PROMPT:
                     return '[{"bbox": [0, 0, 500, 500], "label": "Text"}, {"bbox": [500, 500, 1000, 1000], "label": "Title"}]'
                 if image.getpixel((0, 0)) == (0, 0, 0):
@@ -36,7 +37,7 @@ def test_two_stage_awaits_sibling_cancellation_before_returning(failure):
 
         image = Image.new("RGB", (100, 100), "white")
         image.paste((0, 0, 0), (0, 0, 50, 50))
-        parsing = asyncio.create_task(parse_page(image, "two-stage", Client()))
+        parsing = asyncio.create_task(parse_page(image, "two-stage", Client(), GenerationOptions()))
         try:
             await asyncio.wait_for(sibling_started.wait(), timeout=2)
             if failure == "request_cancelled":

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 
 import httpx
 from PIL import Image
@@ -13,6 +14,17 @@ from .upstream import image_to_png_data_uri, load_image
 
 def _request_image_uri(image: Image.Image, max_pixels: int, min_pixels: int | None) -> str:
     return image_to_png_data_uri(load_image(image, max_pixels=max_pixels, min_pixels=min_pixels))
+
+
+@dataclass(frozen=True)
+class GenerationOptions:
+    """Request generation options; None keeps the Upstream default."""
+
+    temperature: float | None = None
+    top_p: float | None = None
+    repetition_penalty: float | None = None
+    # Overrides the per-stage max_tokens default when set.
+    max_new_tokens: int | None = None
 
 
 class VLLMClient:
@@ -52,15 +64,19 @@ class VLLMClient:
         self,
         image: Image.Image,
         prompt: str,
+        options: GenerationOptions,
         *,
         min_pixels: int | None = None,
         max_tokens: int | None = None,
     ) -> str:
-        """Send one image + prompt, mirroring MonkeyOCRv2_ServerParsing._chat_completion."""
+        """Send one image + prompt, mirroring MonkeyOCRv2_ServerParsing._chat_completion.
+
+        max_tokens is the stage default, replaced by options.max_new_tokens when set.
+        """
         image_uri = await asyncio.to_thread(_request_image_uri, image, self._max_pixels, min_pixels)
         payload = {
             "model": self._model,
-            "temperature": 0,
+            "temperature": 0 if options.temperature is None else options.temperature,
             "messages": [{
                 "role": "user",
                 "content": [
@@ -69,8 +85,15 @@ class VLLMClient:
                 ],
             }],
         }
+        if options.max_new_tokens is not None:
+            max_tokens = options.max_new_tokens
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
+        if options.top_p is not None:
+            payload["top_p"] = options.top_p
+        # Upstream never sends it; vLLM accepts it as an extra sampling parameter.
+        if options.repetition_penalty is not None:
+            payload["repetition_penalty"] = options.repetition_penalty
         response = await self._http.post("/chat/completions", json=payload)
         response.raise_for_status()
         return response.json()["choices"][0]["message"]["content"]
