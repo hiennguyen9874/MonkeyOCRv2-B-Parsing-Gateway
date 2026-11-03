@@ -107,6 +107,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def health():
         return {"logId": _new_log_id(), "errorCode": 0, "errorMsg": "Healthy"}
 
+    @app.get("/health/ready")
+    async def ready():
+        reason = await app.state.vllm.check_ready()
+        if reason is not None:
+            return JSONResponse(
+                status_code=503,
+                content={"logId": _new_log_id(), "errorCode": 503, "errorMsg": reason},
+            )
+        return {"logId": _new_log_id(), "errorCode": 0, "errorMsg": "Ready"}
+
     @app.post("/layout-parsing")
     async def layout_parsing(body: LayoutParsingRequest):
         log_id = body.logId or _new_log_id()

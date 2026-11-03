@@ -21,6 +21,8 @@ class Settings:
     # 0 means no limit.
     max_pages: int = 0
     max_body_bytes: int = 100 * 1024 * 1024
+    # Seconds allowed for the whole /health/ready check, as HPS_HEALTH_CHECK_TIMEOUT.
+    health_check_timeout: float = 5.0
 
     def __post_init__(self) -> None:
         if self.page_concurrency <= 0:
@@ -44,4 +46,5 @@ class Settings:
             page_concurrency=int(os.getenv("MOCR2_PAGE_CONCURRENCY", "8")),
             max_pages=int(os.getenv("MOCR2_MAX_PAGES", "0")),
             max_body_bytes=int(os.getenv("MOCR2_MAX_BODY_BYTES", str(100 * 1024 * 1024))),
+            health_check_timeout=float(os.getenv("MOCR2_HEALTH_CHECK_TIMEOUT", "5")),
         )

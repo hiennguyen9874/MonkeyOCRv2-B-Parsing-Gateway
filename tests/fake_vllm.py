@@ -11,6 +11,7 @@ from __future__ import annotations
 import base64
 import json
 import threading
+import time
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
@@ -37,6 +38,11 @@ def request_prompt(payload: dict) -> str:
 class FakeVLLM:
     def __init__(self, answers: dict[str, str | Callable[[Image.Image], str]]):
         self.answers = answers
+        # Readiness endpoints: tests change these to simulate an unhealthy server.
+        self.health_status = 200
+        self.served_models = ["fake-monkey"]
+        self.get_delay = 0.0
+        self.get_paths: list[str] = []
         self.requests: list[dict] = []
         # Payloads in the order their responses were sent.
         self.completed: list[dict] = []
@@ -47,6 +53,24 @@ class FakeVLLM:
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802 - stdlib handler API
+                fake.get_paths.append(self.path)
+                time.sleep(fake.get_delay)
+                if self.path == "/health":
+                    status, body = fake.health_status, b""
+                elif self.path == "/v1/models":
+                    status = 200
+                    body = json.dumps({
+                        "object": "list",
+                        "data": [{"id": name, "object": "model"} for name in fake.served_models],
+                    }).encode()
+                else:
+                    status, body = 404, b""
+                self.send_response(status)
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
+
             def do_POST(self):  # noqa: N802 - stdlib handler API
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append({"path": self.path, "payload": payload})
