@@ -8,6 +8,7 @@ import socket
 import threading
 import time
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -83,7 +84,18 @@ def test_transient_vllm_errors_are_retried_with_exponential_backoff(fake_vllm, m
         assert backoff * 0.9 <= gap < backoff + 0.3
 
 
-@pytest.mark.parametrize(("mode", "failing_status"), [("two-stage", 503), ("end-to-end", 500)])
+@pytest.mark.parametrize("status", [501, 507, 599])
+def test_other_5xx_responses_are_retried(fake_vllm, status):
+    fake_vllm.post_statuses = [status]
+    with TestClient(create_app()) as client:
+        assert _contents(_post(client, "end-to-end")) == [TEXT]
+
+    assert len(fake_vllm.requests) == 2
+
+
+@pytest.mark.parametrize(
+    ("mode", "failing_status"), [("two-stage", 503), ("end-to-end", 500), ("end-to-end", 507)]
+)
 def test_vllm_failing_after_retries_fails_the_whole_request(fake_vllm, monkeypatch, mode, failing_status):
     monkeypatch.setenv("MOCR2_HTTP_MAX_RETRIES", "2")
     fake_vllm.answers[CONTENT_PROMPT[mode]] = failing_status
@@ -124,6 +136,23 @@ def test_vllm_timeout_is_504(fake_vllm, monkeypatch):
 
     # A call that used the whole timeout is not retried.
     assert len(fake_vllm.requests) == 1
+
+
+def test_vllm_connect_timeout_is_504_without_retry(fake_vllm, monkeypatch):
+    attempts = []
+
+    async def connect_timeout(_transport, request):
+        attempts.append(request)
+        raise httpx.ConnectTimeout("Connection timed out", request=request)
+
+    # A real TCP blackhole is not deterministic; inject the transport failure
+    # while exercising the gateway's HTTP error response.
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", connect_timeout)
+    with TestClient(create_app()) as client:
+        _error(_post(client, "end-to-end", logId="connect-timeout"), 504, "MOCR2_REQUEST_TIMEOUT")
+
+    assert len(attempts) == 1
+    assert fake_vllm.requests == []
 
 
 def test_finish_reason_length_keeps_partial_content(fake_vllm):

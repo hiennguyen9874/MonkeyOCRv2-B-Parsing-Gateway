@@ -14,8 +14,6 @@ from .upstream import image_to_png_data_uri, load_image
 
 logger = logging.getLogger(__name__)
 
-# MonkeyOCRv2_ServerParsing._chat_completion retries these statuses.
-RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
 MAX_RETRY_SLEEP = 30.0
 
 
@@ -136,7 +134,7 @@ class VLLMClient:
     async def _post_with_retries(self, payload: dict) -> httpx.Response:
         """Retry 429/5xx and connection errors with exponential backoff, as Upstream does.
 
-        Unlike Upstream, a read timeout is not retried: one call already used the
+        Unlike Upstream, a timeout is not retried: one call already used the
         whole MOCR2_REQUEST_TIMEOUT, and retrying would outlast the client's own timeout.
         """
         last_error = ""
@@ -147,15 +145,12 @@ class VLLMClient:
                 # The slot is held per attempt, not while sleeping between attempts.
                 async with self._inflight:
                     response = await self._http.post("/chat/completions", json=payload)
-            except httpx.ConnectTimeout as exc:
-                last_error = f"{type(exc).__name__}: {exc}"
-                continue
             except httpx.TimeoutException:
                 raise VLLMError(504, f"vLLM did not answer within {self._timeout}s (MOCR2_REQUEST_TIMEOUT)") from None
             except httpx.TransportError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 continue
-            if response.status_code not in RETRYABLE_STATUSES:
+            if response.status_code != 429 and not response.is_server_error:
                 return response
             last_error = f"HTTP {response.status_code}: {response.text[:500]}"
         raise VLLMError(
