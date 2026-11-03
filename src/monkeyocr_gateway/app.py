@@ -15,10 +15,10 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, FiniteFloat
 
 from .config import PARSING_MODES, Settings
-from .document_loader import DocumentError, open_document
+from .document_loader import DocumentError, open_document, read_file
 from .page_parser import gather_or_cancel, parse_page
 from .paddle_response import DEFAULT_MARKDOWN_IGNORE_LABELS, build_page_result
-from .vllm_client import GenerationOptions, VLLMClient
+from .vllm_client import GenerationOptions, VLLMClient, VLLMError
 
 # Preprocessing changes the coordinate space of the result, so it is rejected
 # rather than ignored (ADR-0004).
@@ -65,9 +65,10 @@ def _new_log_id() -> str:
 
 
 def _error_response(log_id: str, status_code: int, message: str) -> JSONResponse:
+    # As PaddleOCR-VL serving, an error carries no result.
     return JSONResponse(
         status_code=status_code,
-        content={"logId": log_id, "errorCode": status_code, "errorMsg": message, "result": None},
+        content={"logId": log_id, "errorCode": status_code, "errorMsg": message},
     )
 
 
@@ -124,6 +125,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         app.state.vllm = VLLMClient(settings)
+        # Requests beyond the limit wait here, in arrival order.
+        app.state.request_slots = asyncio.Semaphore(settings.request_concurrency)
         try:
             yield
         finally:
@@ -178,12 +181,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 422,
                 f"Invalid vlmExtraArgs.parsingMode {mode!r}; expected 'two-stage' or 'end-to-end'",
             )
-        try:
-            document = await asyncio.to_thread(
-                open_document, body.file, body.fileType, settings.max_pages
-            )
-        except DocumentError as exc:
-            return _error_response(log_id, exc.status_code, str(exc))
+        async with app.state.request_slots:
+            try:
+                return await _parse_document(body, log_id, mode)
+            except (DocumentError, VLLMError) as exc:
+                return _error_response(log_id, exc.status_code, str(exc))
+
+    async def _parse_document(body: LayoutParsingRequest, log_id: str, mode: str) -> dict:
+        """Raises DocumentError or VLLMError; any page or Khối failing fails the request."""
+        data = await read_file(
+            body.file, settings.url_allowlist, settings.max_body_bytes, settings.url_fetch_timeout
+        )
+        document = await asyncio.to_thread(open_document, data, body.fileType, settings.max_pages)
 
         markdown_ignore_labels = body.markdownIgnoreLabels
         if markdown_ignore_labels is None:
@@ -198,11 +207,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         # As in PaddleOCR-VL, page_count is set for PDF input only.
         page_count = document.page_count if document.kind == "pdf" else None
         semaphore = asyncio.Semaphore(settings.page_concurrency)
+        repeat_retries = settings.retry_repeat_max_retries if settings.retry_repeat else 0
 
         async def parse(index: int):
             async with semaphore:
                 image = await asyncio.to_thread(document.page, index)
-                blocks = await parse_page(image, mode, app.state.vllm, options)
+                blocks = await parse_page(image, mode, app.state.vllm, options, repeat_retries)
                 # Crop and encode before releasing the page concurrency slot.
                 return await asyncio.to_thread(
                     build_page_result, image, blocks, model_settings, page_count,
@@ -211,8 +221,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
         try:
             pages = await gather_or_cancel([parse(index) for index in range(document.page_count)])
-        except DocumentError as exc:
-            return _error_response(log_id, exc.status_code, str(exc))
         finally:
             await asyncio.to_thread(document.close)
 

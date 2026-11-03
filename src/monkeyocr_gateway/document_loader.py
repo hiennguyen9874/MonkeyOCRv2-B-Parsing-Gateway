@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import threading
 from io import BytesIO
 
+import httpx
 import pypdfium2 as pdfium
 from PIL import Image
 
@@ -18,6 +20,8 @@ IMAGE_FILE_TYPE = 1
 PDF_RENDER_SCALE = 200 / 72
 # PDFium is not thread-safe (Upstream core_runner.PDFIUM_LOCK); every call takes this lock.
 PDFIUM_LOCK = threading.RLock()
+# Redirects followed when downloading a file URL; every hop must be allowlisted.
+MAX_URL_REDIRECTS = 5
 
 
 class DocumentError(Exception):
@@ -83,19 +87,84 @@ class ImageDocument:
             self._image.close()
 
 
-def open_document(file: str, file_type: int | None, max_pages: int | None) -> PdfDocument | ImageDocument:
-    """Decode Base64 `file`; fileType 0 is PDF, 1 is image, None detects by magic bytes.
+async def read_file(
+    file: str, url_allowlist: tuple[str, ...], max_bytes: int, fetch_timeout: float
+) -> bytes:
+    """The bytes of the request `file`: a Base64 string, or an http(s) URL whose host
+    is in url_allowlist. max_bytes (0 = no limit) caps a download.
 
     Raises DocumentError for input the gateway cannot accept.
     """
-    if file_type not in (PDF_FILE_TYPE, IMAGE_FILE_TYPE, None):
-        raise DocumentError(422, f"Invalid fileType {file_type!r}; expected 0 (PDF), 1 (image) or null")
+    # Base64 has no ':', so a scheme separator near the start means a URL.
+    if "://" in file[:16]:
+        return await _download(file, url_allowlist, max_bytes, fetch_timeout)
+    return await asyncio.to_thread(_decode_base64, file)
+
+
+def _decode_base64(file: str) -> bytes:
     try:
         data = base64.b64decode(file, validate=True)
     except (binascii.Error, ValueError):
         raise DocumentError(422, "file is not valid Base64") from None
     if not data:
         raise DocumentError(422, "file is empty after Base64 decoding")
+    return data
+
+
+def _check_url(url: httpx.URL, allowlist: tuple[str, ...]) -> None:
+    if url.scheme not in ("http", "https"):
+        raise DocumentError(422, f"file URL scheme {url.scheme!r} is not supported; use http or https")
+    if not allowlist:
+        raise DocumentError(422, "file URLs are not accepted: MOCR2_URL_ALLOWLIST is empty; send Base64")
+    if url.host.lower() not in allowlist:
+        raise DocumentError(422, f"file URL host {url.host!r} is not in MOCR2_URL_ALLOWLIST")
+
+
+async def _download(file: str, allowlist: tuple[str, ...], max_bytes: int, timeout: float) -> bytes:
+    """GET the URL, following redirects by hand so that every hop is checked against
+    the allowlist. The timeout covers the whole download, redirects included."""
+    try:
+        url = httpx.URL(file)
+    except httpx.InvalidURL as exc:
+        raise DocumentError(422, f"file is not a valid URL: {exc}") from None
+    try:
+        async with asyncio.timeout(timeout), httpx.AsyncClient(timeout=timeout) as client:
+            for _ in range(MAX_URL_REDIRECTS + 1):
+                _check_url(url, allowlist)
+                async with client.stream("GET", url) as response:
+                    if response.next_request is not None:
+                        url = response.next_request.url
+                        continue
+                    if response.status_code != 200:
+                        raise DocumentError(
+                            422, f"Downloading the file URL failed: HTTP {response.status_code}"
+                        )
+                    data = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        data += chunk
+                        if max_bytes and len(data) > max_bytes:
+                            raise DocumentError(
+                                413, f"file URL content exceeds {max_bytes} bytes (MOCR2_MAX_BODY_BYTES)"
+                            )
+                    if not data:
+                        raise DocumentError(422, "file URL returned no content")
+                    return bytes(data)
+            raise DocumentError(422, f"file URL redirected more than {MAX_URL_REDIRECTS} times")
+    except (TimeoutError, httpx.TimeoutException):
+        raise DocumentError(
+            504, f"Downloading the file URL took longer than {timeout}s (MOCR2_URL_FETCH_TIMEOUT)"
+        ) from None
+    except httpx.HTTPError as exc:
+        raise DocumentError(422, f"Downloading the file URL failed: {type(exc).__name__}: {exc}") from None
+
+
+def open_document(data: bytes, file_type: int | None, max_pages: int | None) -> PdfDocument | ImageDocument:
+    """Open the file bytes; fileType 0 is PDF, 1 is image, None detects by magic bytes.
+
+    Raises DocumentError for input the gateway cannot accept.
+    """
+    if file_type not in (PDF_FILE_TYPE, IMAGE_FILE_TYPE, None):
+        raise DocumentError(422, f"Invalid fileType {file_type!r}; expected 0 (PDF), 1 (image) or null")
 
     detected = file_type is None
     if detected:

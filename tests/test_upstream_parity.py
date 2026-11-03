@@ -11,6 +11,7 @@ process_formula are also run against the functions in Upstream's own source.
 from __future__ import annotations
 
 import ast
+import random
 import re
 from html.parser import HTMLParser
 from io import BytesIO
@@ -26,6 +27,8 @@ from monkeyocr_gateway.upstream import (
     ALL_PROMPT,
     _build_page_tasks,
     _map_bbox_to_image,
+    _should_retry_repeat_output,
+    detect_repeat_token,
     load_image,
     otsl_to_html,
     parse_end2end_output,
@@ -438,3 +441,64 @@ def test_extreme_aspect_ratio_becomes_dummy_image():
 def test_result_is_rgb():
     image = Image.new("L", (10, 10), 255)
     assert load_image(image).mode == "RGB"
+
+
+# --- test_repeat_detection.py -------------------------------------------------
+
+
+def _reference_detect_repeat_token(
+    predicted_tokens: str,
+    base_max_repeats: int = 4,
+    window_size: int = 500,
+    cut_from_end: int = 0,
+    scaling_factor: float = 3.0,
+) -> bool:
+    """Upstream's reference implementation of the original backward-scan algorithm."""
+    if cut_from_end > 0:
+        predicted_tokens = predicted_tokens[:-cut_from_end]
+    for seq_len in range(1, window_size // 2 + 1):
+        candidate_seq = predicted_tokens[-seq_len:]
+        max_repeats = int(base_max_repeats * (1 + scaling_factor / seq_len))
+        repeat_count = 0
+        pos = len(predicted_tokens) - seq_len
+        if pos < 0:
+            continue
+        while pos >= 0:
+            if predicted_tokens[pos : pos + seq_len] == candidate_seq:
+                repeat_count += 1
+                pos -= seq_len
+            else:
+                break
+        if repeat_count > max_repeats:
+            return True
+    return False
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["", "abc", "A" * 20, "AB" * 20, "prefix-" + "xyz" * 30, "A" * 19 + "B"],
+)
+def test_repeat_detector_matches_reference(value):
+    assert detect_repeat_token(value) == _reference_detect_repeat_token(value)
+
+
+def test_repeat_detector_matches_reference_for_random_inputs():
+    rng = random.Random(0)
+    alphabet = "abcXYZ012"
+    for _ in range(200):
+        value = "".join(rng.choice(alphabet) for _ in range(rng.randrange(0, 200)))
+        cut = rng.randrange(0, 60)
+        window = rng.randrange(2, 80)
+        assert detect_repeat_token(value, window_size=window, cut_from_end=cut) == (
+            _reference_detect_repeat_token(value, window_size=window, cut_from_end=cut)
+        )
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [None, "", "Điều 1. Văn bản tổng hợp.", "ha" * 40, "ha" * 40 + "x" * 51, "ab" * 10 + "c" * 51],
+)
+def test_should_retry_repeat_output_matches_upstream_source(raw):
+    upstream = _upstream_function("_should_retry_repeat_output")
+    upstream.__globals__["detect_repeat_token"] = _upstream_function("detect_repeat_token")
+    assert _should_retry_repeat_output(raw) == upstream(raw)

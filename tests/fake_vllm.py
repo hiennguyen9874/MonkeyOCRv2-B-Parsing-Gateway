@@ -4,6 +4,7 @@ Answers are chosen by the prompt text, so a test controls what the "model"
 returns for each Upstream prompt and can inspect every payload it received.
 An answer may also be a callable taking the request image; it runs on the
 server's handler thread, so tests can coordinate out-of-order responses.
+An answer that is an int is an HTTP error status returned for that prompt.
 """
 
 from __future__ import annotations
@@ -36,8 +37,14 @@ def request_prompt(payload: dict) -> str:
 
 
 class FakeVLLM:
-    def __init__(self, answers: dict[str, str | Callable[[Image.Image], str]]):
+    def __init__(self, answers: dict[str, str | int | Callable[[Image.Image], str]]):
         self.answers = answers
+        # Chat requests: statuses returned, one per request, before answering normally.
+        self.post_statuses: list[int] = []
+        self.post_delay = 0.0
+        self.finish_reason = "stop"
+        # time.monotonic() of each chat request received.
+        self.post_times: list[float] = []
         # Readiness endpoints: tests change these to simulate an unhealthy server.
         self.health_status = 200
         self.served_models = ["fake-monkey"]
@@ -75,23 +82,34 @@ class FakeVLLM:
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append({"path": self.path, "payload": payload})
                 with fake.completed_condition:
+                    fake.post_times.append(time.monotonic())
                     fake.in_flight += 1
                     fake.max_in_flight = max(fake.max_in_flight, fake.in_flight)
+                    status = fake.post_statuses.pop(0) if fake.post_statuses else 200
+                time.sleep(fake.post_delay)
                 answer = fake.answers[request_prompt(payload)]
-                if callable(answer):
-                    answer = answer(request_image(payload))
-                body = json.dumps({
-                    "choices": [{
-                        "message": {"role": "assistant", "content": answer},
-                        "finish_reason": "stop",
-                    }],
-                }).encode()
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
+                if status == 200 and isinstance(answer, int):
+                    status = answer
+                if status != 200:
+                    body = json.dumps({"object": "error", "message": "fake failure"}).encode()
+                else:
+                    if callable(answer):
+                        answer = answer(request_image(payload))
+                    body = json.dumps({
+                        "choices": [{
+                            "message": {"role": "assistant", "content": answer},
+                            "finish_reason": fake.finish_reason,
+                        }],
+                    }).encode()
                 with fake.completed_condition:
-                    self.wfile.write(body)
+                    try:
+                        self.send_response(status)
+                        self.send_header("Content-Type", "application/json")
+                        self.send_header("Content-Length", str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    except OSError:
+                        pass  # the gateway gave up waiting (timeout tests)
                     fake.in_flight -= 1
                     fake.completed.append(payload)
                     fake.completed_condition.notify_all()

@@ -458,6 +458,42 @@ def process_formula(content: str):
     return content, extracted
 
 
+def detect_repeat_token(
+    predicted_tokens: str,
+    base_max_repeats: int = 4,
+    window_size: int = 500,
+    cut_from_end: int = 0,
+    scaling_factor: float = 3.0,
+):
+    if cut_from_end > 0:
+        predicted_tokens = predicted_tokens[:-cut_from_end]
+
+    if not predicted_tokens:
+        return False
+
+    max_seq_len = min(window_size // 2, len(predicted_tokens))
+    for seq_len in range(1, max_seq_len + 1):
+        candidate_seq = predicted_tokens[-seq_len:]
+        max_repeats = int(base_max_repeats * (1 + scaling_factor / seq_len))
+        if predicted_tokens.endswith(candidate_seq * (max_repeats + 1)):
+            return True
+
+    return False
+
+
+def _should_retry_repeat_output(raw: str) -> bool:
+    raw = raw or ""
+    return detect_repeat_token(raw) or (
+        len(raw) > 50 and detect_repeat_token(raw, cut_from_end=50)
+    )
+
+
+def repeat_retry_sampling(retry: int) -> tuple[float, float]:
+    """(temperature, top_p) of the retry-th repeat retry (0-based), as in
+    _recognize_one_block and batch_inference_with_repeat_retry."""
+    return min(0.2 * (retry + 1), 0.8), 0.95
+
+
 def _apply_jpeg_orientation(img: Image.Image) -> Image.Image:
     """core_runner._apply_jpeg_orientation, without the path-based JPEG check
     (the gateway never loads from a path or URL string)."""

@@ -210,7 +210,7 @@ def test_invalid_parsing_mode_is_422_with_clear_message(gateway, fake_vllm, mode
     assert body["errorCode"] == 422
     assert "parsingMode" in body["errorMsg"]
     assert "two-stage" in body["errorMsg"] and "end-to-end" in body["errorMsg"]
-    assert body["result"] is None
+    assert "result" not in body
     assert fake_vllm.requests == []
 
 

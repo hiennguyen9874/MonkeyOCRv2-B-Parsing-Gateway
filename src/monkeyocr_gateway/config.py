@@ -23,10 +23,33 @@ class Settings:
     max_body_bytes: int = 100 * 1024 * 1024
     # Seconds allowed for the whole /health/ready check, as HPS_HEALTH_CHECK_TIMEOUT.
     health_check_timeout: float = 5.0
+    # Retries of a vLLM call on 429/5xx/connection errors; the n-th retry waits
+    # http_retry_backoff * 2**(n-1) seconds, capped at 30 s, as Upstream does.
+    http_max_retries: int = 5
+    http_retry_backoff: float = 1.0
+    # Upstream --retry-repeat: re-ask recognition and end-to-end calls whose output
+    # ends in repeated tokens, up to retry_repeat_max_retries times.
+    retry_repeat: bool = False
+    retry_repeat_max_retries: int = 3
+    # /layout-parsing requests processed at once; more wait in a queue.
+    request_concurrency: int = 16
+    # vLLM chat calls in flight across the whole process.
+    vllm_max_inflight: int = 64
+    # Hosts that file URLs may point to (exact, case-insensitive); empty rejects every URL.
+    url_allowlist: tuple[str, ...] = ()
+    # Seconds allowed to download a file URL, redirects included.
+    url_fetch_timeout: float = 30.0
 
     def __post_init__(self) -> None:
-        if self.page_concurrency <= 0:
-            raise ValueError("MOCR2_PAGE_CONCURRENCY must be positive")
+        for name, value in [
+            ("MOCR2_PAGE_CONCURRENCY", self.page_concurrency),
+            ("MOCR2_REQUEST_CONCURRENCY", self.request_concurrency),
+            ("MOCR2_SERVER_MAX_INFLIGHT", self.vllm_max_inflight),
+        ]:
+            if value <= 0:
+                raise ValueError(f"{name} must be positive")
+        if self.http_max_retries < 0 or self.retry_repeat_max_retries < 0:
+            raise ValueError("MOCR2_HTTP_MAX_RETRIES and MOCR2_REC_MAX_RETRIES must not be negative")
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -47,4 +70,16 @@ class Settings:
             max_pages=int(os.getenv("MOCR2_MAX_PAGES", "0")),
             max_body_bytes=int(os.getenv("MOCR2_MAX_BODY_BYTES", str(100 * 1024 * 1024))),
             health_check_timeout=float(os.getenv("MOCR2_HEALTH_CHECK_TIMEOUT", "5")),
+            http_max_retries=int(os.getenv("MOCR2_HTTP_MAX_RETRIES", "5")),
+            http_retry_backoff=float(os.getenv("MOCR2_HTTP_RETRY_BACKOFF", "1.0")),
+            retry_repeat=os.getenv("MOCR2_RETRY_REPEAT", "0").lower() in {"1", "true", "yes"},
+            retry_repeat_max_retries=int(os.getenv("MOCR2_REC_MAX_RETRIES", "3")),
+            request_concurrency=int(os.getenv("MOCR2_REQUEST_CONCURRENCY", "16")),
+            vllm_max_inflight=int(os.getenv("MOCR2_SERVER_MAX_INFLIGHT", "64")),
+            url_allowlist=tuple(
+                host.strip().lower()
+                for host in os.getenv("MOCR2_URL_ALLOWLIST", "").split(",")
+                if host.strip()
+            ),
+            url_fetch_timeout=float(os.getenv("MOCR2_URL_FETCH_TIMEOUT", "30")),
         )

@@ -258,7 +258,7 @@ def test_non_finite_generation_options_are_rejected(gateway, fake_vllm, field, v
     assert body["errorCode"] == 422
     assert body["logId"] == "invalid-generation"
     assert field in body["errorMsg"]
-    assert body["result"] is None
+    assert "result" not in body
     assert fake_vllm.requests == []
 
 

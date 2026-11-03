@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 
 import httpx
@@ -10,6 +11,21 @@ from PIL import Image
 
 from .config import Settings
 from .upstream import image_to_png_data_uri, load_image
+
+logger = logging.getLogger(__name__)
+
+# MonkeyOCRv2_ServerParsing._chat_completion retries these statuses.
+RETRYABLE_STATUSES = frozenset({429, 500, 502, 503, 504})
+MAX_RETRY_SLEEP = 30.0
+
+
+class VLLMError(Exception):
+    """A vLLM call that failed for good; status_code is the HTTP status to return:
+    503 vLLM unavailable after retries, 504 timeout, 500 anything else."""
+
+    def __init__(self, status_code: int, message: str):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def _request_image_uri(image: Image.Image, max_pixels: int, min_pixels: int | None) -> str:
@@ -32,7 +48,16 @@ class VLLMClient:
         base_url = settings.vllm_url.rstrip("/")
         if not base_url.endswith("/v1"):
             base_url += "/v1"
-        self._http = httpx.AsyncClient(base_url=base_url, timeout=settings.request_timeout)
+        # The in-flight semaphore bounds connections, so the pool itself is unbounded.
+        self._http = httpx.AsyncClient(
+            base_url=base_url,
+            timeout=settings.request_timeout,
+            limits=httpx.Limits(max_connections=None),
+        )
+        self._timeout = settings.request_timeout
+        self._max_retries = settings.http_max_retries
+        self._retry_backoff = settings.http_retry_backoff
+        self._inflight = asyncio.Semaphore(settings.vllm_max_inflight)
         # vLLM serves /health at the root, outside /v1.
         self._health_url = base_url.removesuffix("/v1") + "/health"
         self._health_check_timeout = settings.health_check_timeout
@@ -72,6 +97,8 @@ class VLLMClient:
         """Send one image + prompt, mirroring MonkeyOCRv2_ServerParsing._chat_completion.
 
         max_tokens is the stage default, replaced by options.max_new_tokens when set.
+        Raises VLLMError when the call fails after retries. Output cut at the token
+        limit (finish reason length) is returned as is.
         """
         image_uri = await asyncio.to_thread(_request_image_uri, image, self._max_pixels, min_pixels)
         payload = {
@@ -94,9 +121,46 @@ class VLLMClient:
         # Upstream never sends it; vLLM accepts it as an extra sampling parameter.
         if options.repetition_penalty is not None:
             payload["repetition_penalty"] = options.repetition_penalty
-        response = await self._http.post("/chat/completions", json=payload)
-        response.raise_for_status()
-        return response.json()["choices"][0]["message"]["content"]
+        response = await self._post_with_retries(payload)
+        if response.is_error:
+            raise VLLMError(500, f"vLLM returned HTTP {response.status_code}: {response.text[:500]}")
+        try:
+            choice = response.json()["choices"][0]
+            content = choice["message"]["content"]
+        except (ValueError, KeyError, IndexError, TypeError) as exc:
+            raise VLLMError(500, f"vLLM returned a malformed chat completion: {exc!r}") from None
+        if choice.get("finish_reason") == "length":
+            logger.warning("vLLM output hit max_tokens (finish reason length); keeping partial content")
+        return content
+
+    async def _post_with_retries(self, payload: dict) -> httpx.Response:
+        """Retry 429/5xx and connection errors with exponential backoff, as Upstream does.
+
+        Unlike Upstream, a read timeout is not retried: one call already used the
+        whole MOCR2_REQUEST_TIMEOUT, and retrying would outlast the client's own timeout.
+        """
+        last_error = ""
+        for attempt in range(self._max_retries + 1):
+            if attempt:
+                await asyncio.sleep(min(self._retry_backoff * 2 ** (attempt - 1), MAX_RETRY_SLEEP))
+            try:
+                # The slot is held per attempt, not while sleeping between attempts.
+                async with self._inflight:
+                    response = await self._http.post("/chat/completions", json=payload)
+            except httpx.ConnectTimeout as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                continue
+            except httpx.TimeoutException:
+                raise VLLMError(504, f"vLLM did not answer within {self._timeout}s (MOCR2_REQUEST_TIMEOUT)") from None
+            except httpx.TransportError as exc:
+                last_error = f"{type(exc).__name__}: {exc}"
+                continue
+            if response.status_code not in RETRYABLE_STATUSES:
+                return response
+            last_error = f"HTTP {response.status_code}: {response.text[:500]}"
+        raise VLLMError(
+            503, f"vLLM unavailable after {self._max_retries + 1} attempts: {last_error}"
+        )
 
     async def aclose(self) -> None:
         await self._http.aclose()

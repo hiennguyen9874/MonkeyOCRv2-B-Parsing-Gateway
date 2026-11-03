@@ -104,7 +104,7 @@ def _error(response, status: int, *words: str) -> dict:
     assert response.status_code == status, response.text
     body = response.json()
     assert body["errorCode"] == status
-    assert body["result"] is None
+    assert "result" not in body
     assert body["logId"]
     for word in words:
         assert word in body["errorMsg"]
