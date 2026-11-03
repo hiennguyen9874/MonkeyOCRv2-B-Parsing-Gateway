@@ -1,0 +1,1 @@
+[{"bbox": [100, 50, 900, 120], "label": "Title"}, {"bbox": [100, 150, 900, 400], "label": "Text"}, {"bbox": [200, 420, 800, 480], "label": "Formula"}, {"bbox": [100, 500, 900, 800], "label": "Table"}, {"bbox": [300, 810, 700, 840], "label": "Picture"}, {"bbox": [100, 850, 900, 900], "label": "Footnote"}, {"bbox": [80, 950, 920, 980], "label": "Page-footer"}]

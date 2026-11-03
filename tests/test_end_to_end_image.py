@@ -18,7 +18,12 @@ def _post_page(gateway, fmt="PNG"):
     page = Image.new("RGB", PAGE_SIZE, "white")
     return gateway.post(
         "/layout-parsing",
-        json={"file": image_base64(page, fmt), "fileType": 1, "visualize": False},
+        json={
+            "file": image_base64(page, fmt),
+            "fileType": 1,
+            "visualize": False,
+            "vlmExtraArgs": {"parsingMode": "end-to-end"},
+        },
     )
 
 

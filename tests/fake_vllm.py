@@ -2,33 +2,56 @@
 
 Answers are chosen by the prompt text, so a test controls what the "model"
 returns for each Upstream prompt and can inspect every payload it received.
+An answer may also be a callable taking the request image; it runs on the
+server's handler thread, so it can sleep to make responses finish out of order.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import threading
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from io import BytesIO
+
+from PIL import Image
+
+
+def request_image(payload: dict) -> Image.Image:
+    """Decode the PNG data URI sent in a chat payload."""
+    url = next(
+        item["image_url"]["url"]
+        for item in payload["messages"][0]["content"]
+        if item["type"] == "image_url"
+    )
+    return Image.open(BytesIO(base64.b64decode(url.split(",", 1)[1])))
+
+
+def request_prompt(payload: dict) -> str:
+    return next(
+        item["text"] for item in payload["messages"][0]["content"] if item["type"] == "text"
+    )
 
 
 class FakeVLLM:
-    def __init__(self, answers: dict[str, str]):
+    def __init__(self, answers: dict[str, str | Callable[[Image.Image], str]]):
         self.answers = answers
         self.requests: list[dict] = []
+        # Payloads in the order their responses were sent.
+        self.completed: list[dict] = []
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):  # noqa: N802 - stdlib handler API
                 payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
                 fake.requests.append({"path": self.path, "payload": payload})
-                prompt = next(
-                    item["text"]
-                    for item in payload["messages"][0]["content"]
-                    if item["type"] == "text"
-                )
+                answer = fake.answers[request_prompt(payload)]
+                if callable(answer):
+                    answer = answer(request_image(payload))
                 body = json.dumps({
                     "choices": [{
-                        "message": {"role": "assistant", "content": fake.answers[prompt]},
+                        "message": {"role": "assistant", "content": answer},
                         "finish_reason": "stop",
                     }],
                 }).encode()
@@ -37,6 +60,7 @@ class FakeVLLM:
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
+                fake.completed.append(payload)
 
             def log_message(self, *_args):
                 return

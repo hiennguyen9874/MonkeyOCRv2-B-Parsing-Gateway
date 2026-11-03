@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 
-def build_page_result(width: int, height: int, blocks: list[dict]) -> dict:
+def build_page_result(width: int, height: int, blocks: list[dict], model_settings: dict) -> dict:
     parsing_res_list = [
         {
             "block_label": block["label"],
@@ -18,6 +18,7 @@ def build_page_result(width: int, height: int, blocks: list[dict]) -> dict:
         "prunedResult": {
             "width": width,
             "height": height,
+            "model_settings": model_settings,
             "parsing_res_list": parsing_res_list,
         },
         "markdown": {

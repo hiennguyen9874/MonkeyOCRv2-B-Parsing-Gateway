@@ -16,10 +16,27 @@ from PIL import Image, ImageOps
 
 UPSTREAM_REVISION = "106914e"
 
-# core_runner.ALL_PROMPT (only the end-to-end prompt is used so far).
+# core_runner.ALL_PROMPT. Labels missing here (Footnote, Picture, ...) are not
+# recognized in two-stage mode.
 ALL_PROMPT = {
+    "Caption": "Please output the text content from the image.",
+    # "Footnote": "Please output the text content from the image.",
+    "List-item": "Please output the text content from the image.",
+    "Page-footer": "Please output the text content from the image.",
+    "Page-header": "Please output the text content from the image.",
+    "Section-header": "Please output the text content from the image.",
+    "Text": "Please output the text content from the image.",
+    "Title": "Please output the text content from the image.",
+    "Formula": "Please write out the expression of the formula in the image using LaTeX format.",
+    "Table": "Please extract the table from the image and represent it in OTSL format.",
+    "LAYOUT": "Please output the categories and coordinates of the document elements in reading order.",
     "END2END": "List the document elements in reading order, including their categories, coordinates, and the content of each element.",
 }
+
+# core_runner.get_layout and _recognize_one_block request limits.
+LAYOUT_MIN_PIXELS = 1003520
+LAYOUT_MAX_TOKENS = 4096
+RECOGNITION_MAX_TOKENS = 5000
 
 
 def image_to_png_data_uri(image: Image.Image) -> str:
@@ -162,6 +179,46 @@ def _normalize_model_item(item, include_content: bool):
         content = item.get("content", "")
         normalized["content"] = content if isinstance(content, str) else str(content or "")
     return normalized
+
+
+def parse_layout_output(text: str, image_size: tuple[int, int]) -> list[dict]:
+    """core_runner.get_layout, the per-page parsing done after batch_inference."""
+    width, height = image_size
+    items = _parse_tolerant_items(
+        text,
+        lambda item: _normalize_model_item(item, include_content=False),
+    )
+    return [{
+        "bbox": _map_bbox_to_image(item["bbox"], width, height),
+        "label": item["label"],
+    } for item in items]
+
+
+def _build_page_tasks(page_idx, image, layouts, doc_id=None):
+    """core_runner._build_page_tasks: crops come from the full-resolution page."""
+    width, height = image.size
+    tasks = []
+    for block_idx, item in enumerate(layouts):
+        x1, y1, x2, y2 = item["bbox"]
+        x1 = max(0, min(int(round(x1)), max(0, width - 1)))
+        y1 = max(0, min(int(round(y1)), max(0, height - 1)))
+        x2 = max(x1 + 1, min(int(round(x2)), width))
+        y2 = max(y1 + 1, min(int(round(y2)), height))
+        label = item["label"]
+        task = {
+            "image": image.crop((x1, y1, x2, y2)),
+            "bbox": [x1, y1, x2, y2],
+            "label": label,
+            "question": ALL_PROMPT.get(label, ""),
+            "need_infer": label in ALL_PROMPT,
+            "page_idx": page_idx,
+            "page_num": page_idx + 1,
+            "block_idx": block_idx,
+        }
+        if doc_id is not None:
+            task["doc_id"] = doc_id
+        tasks.append(task)
+    return tasks
 
 
 def parse_end2end_output(text: str, image_size: tuple[int, int]) -> tuple[list[dict], list[dict]]:

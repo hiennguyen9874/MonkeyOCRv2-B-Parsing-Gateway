@@ -12,10 +12,15 @@ from fake_vllm import FakeVLLM
 from monkeyocr_gateway.app import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures"
+# Prompts copied from Upstream core_runner.ALL_PROMPT at 106914e.
 END2END_PROMPT = (
     "List the document elements in reading order, including their categories, "
     "coordinates, and the content of each element."
 )
+LAYOUT_PROMPT = "Please output the categories and coordinates of the document elements in reading order."
+TEXT_PROMPT = "Please output the text content from the image."
+FORMULA_PROMPT = "Please write out the expression of the formula in the image using LaTeX format."
+TABLE_PROMPT = "Please extract the table from the image and represent it in OTSL format."
 
 
 def recorded(name: str) -> str:

@@ -1,16 +1,30 @@
 """Parity with Upstream MonkeyOCRv2 helpers at revision 106914e.
 
-Cases are copied from references/MonkeyOCRv2/parsing/tests/test_model_output_parsing.py
-and test_bbox.py so that drift shows up when the pinned revision changes.
+Cases are copied from references/MonkeyOCRv2/parsing/tests/test_model_output_parsing.py,
+test_bbox.py and the layout half of test_fake_model_pipeline.py /
+test_fake_server_pipeline.py so that drift shows up when the pinned revision changes.
 The load_image cases have no Upstream test; their expected sizes are worked out
 by hand from Upstream's formula.
 """
 
 from __future__ import annotations
 
+import ast
+from pathlib import Path
+
+import pytest
 from PIL import Image
 
-from monkeyocr_gateway.upstream import _map_bbox_to_image, load_image, parse_end2end_output
+from monkeyocr_gateway.upstream import (
+    ALL_PROMPT,
+    _build_page_tasks,
+    _map_bbox_to_image,
+    load_image,
+    parse_end2end_output,
+    parse_layout_output,
+)
+
+CORE_RUNNER = Path(__file__).parents[1] / "references/MonkeyOCRv2/parsing/core_runner.py"
 
 
 def _labels(records):
@@ -96,7 +110,58 @@ def test_invalid_items_are_skipped():
     assert records[0]["content"] == "keep"
 
 
-# --- test_bbox.py (the _build_page_tasks case belongs to two-stage mode) ----
+# --- ALL_PROMPT --------------------------------------------------------------
+
+
+def test_all_prompt_matches_upstream_source():
+    # Read the literal from Upstream's source; importing it would pull in torch.
+    if not CORE_RUNNER.exists():
+        pytest.skip("references/MonkeyOCRv2 is not checked out (git submodule update --init)")
+    tree = ast.parse(CORE_RUNNER.read_text(encoding="utf-8"))
+    upstream = next(
+        ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "ALL_PROMPT" for target in node.targets)
+    )
+    assert ALL_PROMPT == upstream
+
+
+# --- test_fake_model_pipeline.py / test_fake_server_pipeline.py (get_layout) --
+
+
+def test_layout_output_maps_to_pixel_bboxes_without_content():
+    text = '[{"bbox": [0, 0, 1000, 1000], "label": "Text"}]'
+    assert parse_layout_output(text, (32, 16)) == [{"bbox": [0, 0, 32, 16], "label": "Text"}]
+    assert parse_layout_output(text, (40, 20)) == [{"bbox": [0, 0, 40, 20], "label": "Text"}]
+
+
+def test_layout_output_is_tolerant_like_end2end():
+    text = '[{"bbox": [0, 0, 100, 100], "label": "Text", "content": "x"}, {"bbox": [10, 10'
+    assert parse_layout_output(text, (1000, 1000)) == [{"bbox": [0, 0, 100, 100], "label": "Text"}]
+
+
+def test_fake_model_layout_to_tasks():
+    image = Image.new("RGB", (32, 16), "white")
+    tasks = _build_page_tasks(0, image, parse_layout_output('[{"bbox": [0, 0, 1000, 1000], "label": "Text"}]', image.size))
+    assert len(tasks) == 1
+    assert tasks[0]["question"] == ALL_PROMPT["Text"]
+    assert tasks[0]["need_infer"] is True
+    assert tasks[0]["image"].size == (32, 16)
+
+
+def test_labels_missing_from_prompt_map_need_no_inference():
+    image = Image.new("RGB", (10, 10))
+    tasks = _build_page_tasks(
+        0,
+        image,
+        [{"bbox": [0, 0, 5, 5], "label": "Footnote"}, {"bbox": [0, 0, 5, 5], "label": "Picture"}],
+    )
+    assert [(task["need_infer"], task["question"]) for task in tasks] == [(False, ""), (False, "")]
+    assert [task["block_idx"] for task in tasks] == [0, 1]
+
+
+# --- test_bbox.py -------------------------------------------------------------
 
 
 def test_full_frame_maps_to_image_size():
@@ -117,6 +182,22 @@ def test_zero_area_box_is_expanded_to_one_pixel():
 
 def test_swapped_corners_are_ordered():
     assert _map_bbox_to_image([800, 200, 100, 900], 100, 100) == [10, 20, 80, 90]
+
+
+def test_build_page_tasks_clamps_pixel_bboxes():
+    image = Image.new("RGB", (10, 10), color=(0, 0, 0))
+    tasks = _build_page_tasks(
+        0,
+        image,
+        [
+            {"bbox": [-10, -10, 100, 100], "label": "Text"},
+            {"bbox": [5, 5, 5, 5], "label": "Title"},
+        ],
+    )
+    assert tasks[0]["bbox"] == [0, 0, 10, 10]
+    assert tasks[1]["bbox"] == [5, 5, 6, 6]
+    assert tasks[0]["image"].size == (10, 10)
+    assert tasks[1]["image"].size == (1, 1)
 
 
 # --- load_image request resizing --------------------------------------------
