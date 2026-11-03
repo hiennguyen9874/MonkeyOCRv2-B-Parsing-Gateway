@@ -12,7 +12,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, FiniteFloat
 
 from .config import PARSING_MODES, Settings
 from .document_loader import DocumentError, open_document
@@ -38,9 +38,9 @@ class LayoutParsingRequest(BaseModel):
     returnMarkdownImages: bool = True
     useDocOrientationClassify: bool | None = None
     useDocUnwarping: bool | None = None
-    temperature: float | None = None
-    topP: float | None = None
-    repetitionPenalty: float | None = None
+    temperature: FiniteFloat | None = None
+    topP: FiniteFloat | None = None
+    repetitionPenalty: FiniteFloat | None = None
     maxNewTokens: int | None = None
 
 

@@ -248,6 +248,20 @@ def test_errors_keep_the_client_log_id(gateway, fields):
     assert response.json()["errorCode"] == 422
 
 
+@pytest.mark.parametrize("field", ["temperature", "topP", "repetitionPenalty"])
+@pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+def test_non_finite_generation_options_are_rejected(gateway, fake_vllm, field, value):
+    response = _post(gateway, logId="invalid-generation", **{field: value})
+
+    assert response.status_code == 422
+    body = response.json()
+    assert body["errorCode"] == 422
+    assert body["logId"] == "invalid-generation"
+    assert field in body["errorMsg"]
+    assert body["result"] is None
+    assert fake_vllm.requests == []
+
+
 def test_validation_error_without_log_id_gets_a_generated_one_and_the_envelope(gateway):
     response = gateway.post("/layout-parsing", json={"fileType": 1})
 
