@@ -126,6 +126,8 @@ MOCR2_SERVED_MODEL_NAME=MonkeyOCRv2 \
 
 Check `curl -i http://127.0.0.1:8080/health/ready`: it returns 503 while the model is loading and 200 once the server is healthy and lists the configured alias. Use the image/PDF example above with `uv run --locked` instead of the vLLM extra. Two-stage parsing is the default; set `MOCR2_PARSING_MODE=end-to-end` on the gateway or send `vlmExtraArgs.parsingMode` to select end-to-end parsing.
 
+For `repetitionPenalty`, the gateway sends llama-server `repeat_penalty` and leaves `repeat_last_n` to the server configuration. On the tested build, the default window is 64 tokens; setting it to 0 disables the penalty. This does not guarantee vLLM's whole-sequence behavior. See the [reproduction and compatibility limits](docs/validation/llama-cpp-repeat-penalty.md).
+
 To compare both backends on synthetic pages in both modes, see the [manual GPU comparison](docs/validation/llama-cpp.md). It saves raw responses, Markdown CER, block differences, and the reproduction command; it has no pass/fail threshold and does not run in pytest.
 
 ## Configuration and tests

@@ -202,7 +202,7 @@ def test_repeat_retry_asks_again_with_rising_temperature(fake_vllm, monkeypatch,
     for call in calls:
         if backend == "llama-cpp":
             assert call["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
-            assert call["repeat_penalty"] == 1.05 and call["repeat_last_n"] == -1
+            assert call["repeat_penalty"] == 1.05 and "repeat_last_n" not in call
             assert "repetition_penalty" not in call
         else:
             assert [m["role"] for m in call["messages"]] == ["user"]

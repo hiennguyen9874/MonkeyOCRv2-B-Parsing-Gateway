@@ -195,6 +195,7 @@ def test_request_min_max_pixels_do_not_change_the_image_sent_to_vllm(gateway, fa
 @pytest.mark.parametrize("backend", [None, "vllm", "llama-cpp"])
 @pytest.mark.parametrize("mode", MODES)
 def test_request_generation_options_reach_vllm(fake_vllm, monkeypatch, mode, backend):
+    fake_vllm.reject_negative_repeat_last_n = backend == "llama-cpp"
     if backend is None:
         monkeypatch.delenv("MOCR2_SERVER_BACKEND", raising=False)
     else:
@@ -203,6 +204,9 @@ def test_request_generation_options_reach_vllm(fake_vllm, monkeypatch, mode, bac
         response = _post(gateway, mode, temperature=0.3, topP=0.8, repetitionPenalty=1.05, maxNewTokens=777)
 
     assert response.status_code == 200, response.text
+    pages = response.json()["result"]["layoutParsingResults"]
+    assert pages and pages[0]["markdown"]["text"]
+    assert pages[0]["prunedResult"]["parsing_res_list"]
     assert fake_vllm.requests
     for request in fake_vllm.requests:
         payload = request["payload"]
@@ -213,7 +217,7 @@ def test_request_generation_options_reach_vllm(fake_vllm, monkeypatch, mode, bac
             assert payload["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
             assert [m["role"] for m in payload["messages"]] == ["system", "user"]
             assert payload["repeat_penalty"] == 1.05
-            assert payload["repeat_last_n"] == -1
+            assert "repeat_last_n" not in payload
             assert "repetition_penalty" not in payload
         else:
             assert [m["role"] for m in payload["messages"]] == ["user"]

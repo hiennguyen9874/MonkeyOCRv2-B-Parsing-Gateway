@@ -122,7 +122,6 @@ class VLLMClient:
         if options.repetition_penalty is not None:
             if self._backend == "llama-cpp":
                 payload["repeat_penalty"] = options.repetition_penalty
-                payload["repeat_last_n"] = -1
             else:
                 payload["repetition_penalty"] = options.repetition_penalty
         response = await self._post_with_retries(payload)

@@ -43,6 +43,7 @@ class FakeVLLM:
         # Chat requests: statuses returned, one per request, before answering normally.
         self.post_statuses: list[int] = []
         self.post_delay = 0.0
+        self.reject_negative_repeat_last_n = False
         self.finish_reason = "stop"
         # time.monotonic() of each chat request received.
         self.post_times: list[float] = []
@@ -89,6 +90,8 @@ class FakeVLLM:
                     status = fake.post_statuses.pop(0) if fake.post_statuses else 200
                 time.sleep(fake.post_delay)
                 answer = fake.answers[request_prompt(payload)]
+                if fake.reject_negative_repeat_last_n and payload.get("repeat_last_n", 0) < 0:
+                    status = 400
                 if status == 200 and isinstance(answer, int):
                     status = answer
                 if status != 200:
