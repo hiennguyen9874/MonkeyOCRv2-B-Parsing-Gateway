@@ -181,3 +181,4 @@ pyrightconfig.json
 /.pi/
 .pi-last-response.md
 /models/
+/llama.cpp/

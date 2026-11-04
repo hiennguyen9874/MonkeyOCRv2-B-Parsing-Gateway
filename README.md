@@ -1,6 +1,6 @@
 # MonkeyOCRv2-B-Parsing Gateway
 
-A FastAPI gateway that exposes the PaddleOCR-VL `/layout-parsing` API over a vLLM server running MonkeyOCRv2-B-Parsing. It is intended for PaddleOCR-VL clients such as WeKnora.
+A FastAPI gateway that exposes the PaddleOCR-VL `/layout-parsing` API over a vLLM or llama.cpp server running MonkeyOCRv2-B-Parsing. It is intended for PaddleOCR-VL clients such as WeKnora.
 
 ## Run locally with uv
 
@@ -92,6 +92,39 @@ for page in result["result"]["layoutParsingResults"]:
 ```
 
 For WeKnora, configure the gateway's base URL (for example `http://127.0.0.1:8080` when running on the same host); the client appends `/layout-parsing`.
+
+## Run with llama.cpp
+
+From the repository root, supply your own CUDA-enabled `./llama.cpp/llama-server` build; `llama.cpp/` is gitignored and is not a submodule. The tested revision is commit `ca8daad19` (build 12072), built with CUDA (`GGML_CUDA=ON`). The [GGUF model card](https://huggingface.co/aenawi/MonkeyOCRv2-B-GGUF) reports build b11382 as the minimum tested build.
+
+Download the Q8_0 text model and F16 vision projector into their own gitignored directory:
+
+```sh
+uv run --with huggingface-hub hf download aenawi/MonkeyOCRv2-B-GGUF \
+  MonkeyOCRv2-B.q8_0.gguf MonkeyOCRv2-B.mmproj-f16.gguf \
+  --local-dir models/MonkeyOCRv2-B-GGUF
+```
+
+Start the server on an unused GPU (GPU 0 here). The 65,536-token context is shared between four slots, giving 16,384 tokens per slot. Keep the server on loopback unless access is appropriately secured.
+
+```sh
+CUDA_VISIBLE_DEVICES=0 ./llama.cpp/llama-server \
+  -m models/MonkeyOCRv2-B-GGUF/MonkeyOCRv2-B.q8_0.gguf \
+  --mmproj models/MonkeyOCRv2-B-GGUF/MonkeyOCRv2-B.mmproj-f16.gguf \
+  -np 4 -c 65536 -ngl 99 --alias MonkeyOCRv2 --host 127.0.0.1 --port 19388
+```
+
+In another terminal, start the gateway without the vLLM extra. `MOCR2_SERVED_MODEL_NAME` must match the server's `--alias`:
+
+```sh
+MOCR2_SERVER_BACKEND=llama-cpp \
+MOCR2_SERVER_URL=http://127.0.0.1:19388 \
+MOCR2_SERVED_MODEL_NAME=MonkeyOCRv2 \
+  uv run --locked uvicorn --factory monkeyocr_gateway.app:create_app \
+  --host 127.0.0.1 --port 8080
+```
+
+Check `curl -i http://127.0.0.1:8080/health/ready`: it returns 503 while the model is loading and 200 once the server is healthy and lists the configured alias. Use the image/PDF example above with `uv run --locked` instead of the vLLM extra. Two-stage parsing is the default; set `MOCR2_PARSING_MODE=end-to-end` on the gateway or send `vlmExtraArgs.parsingMode` to select end-to-end parsing.
 
 ## Configuration and tests
 
