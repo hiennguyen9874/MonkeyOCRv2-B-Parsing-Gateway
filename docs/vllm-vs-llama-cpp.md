@@ -1,6 +1,6 @@
 # Triển khai với vLLM và llama.cpp
 
-Tài liệu này tổng hợp [spec #12](https://github.com/hiennguyen9874/MonkeyOCRv2-B-Parsing-Gateway/issues/12), các ticket triển khai #13–#16 và sửa lỗi [#17](https://github.com/hiennguyen9874/MonkeyOCRv2-B-Parsing-Gateway/issues/17). Hướng dẫn chạy đầy đủ nằm trong [README](../README.md); các quyết định về payload nằm trong [ADR-0005](adr/0005-llama-server-via-server-backend.md).
+Tài liệu này tổng hợp [spec #12](https://github.com/hiennguyen9874/MonkeyOCRv2-B-Parsing-Gateway/issues/12), các ticket triển khai #13–#16 và các sửa lỗi [#17](https://github.com/hiennguyen9874/MonkeyOCRv2-B-Parsing-Gateway/issues/17), [#18](https://github.com/hiennguyen9874/MonkeyOCRv2-B-Parsing-Gateway/issues/18). Hướng dẫn chạy đầy đủ nằm trong [README](../README.md); các quyết định về payload nằm trong [ADR-0005](adr/0005-llama-server-via-server-backend.md).
 
 ## Tổng quan
 
@@ -12,7 +12,7 @@ Client như WeKnora vẫn gọi cùng API PaddleOCR-VL của gateway, đặc bi�
 | Model | `zenosai/MonkeyOCRv2-B-Parsing` gốc | `aenawi/MonkeyOCRv2-B-GGUF`: text Q8_0 và vision projector F16 |
 | Máy chủ | vLLM, chạy qua launcher Upstream để đăng ký model tùy biến | `llama-server` không sửa đổi, do operator tự build/cung cấp |
 | Môi trường | Cài vLLM với một CUDA extra; hướng dẫn dùng GPU NVIDIA | Không cần vLLM extra cho gateway; build CUDA được khuyến nghị. Đã thử CPU cho kiểm tra #17, không cam kết hiệu năng CPU |
-| System message | Không gửi, theo đường server của Upstream | Gửi `You are a helpful assistant.` trước user message trong mọi lời gọi suy luận |
+| System message | Không gửi, theo đường server của Upstream và chat template của model | Không gửi, giống vLLM (#18); chat template nhúng trong GGUF giống hệt bản gốc |
 | `repetitionPenalty` | Gửi `repetition_penalty` | Gửi `repeat_penalty`, không gửi `repeat_last_n`; ngữ nghĩa cửa sổ có thể khác |
 | Tên model | `MOCR2_SERVED_MODEL_NAME` khớp `--served-model-name` | `MOCR2_SERVED_MODEL_NAME` khớp `--alias` |
 
@@ -62,7 +62,7 @@ Với cả hai, kiểm tra `curl -i http://127.0.0.1:8080/health/ready` trước
 
 ## Khác biệt payload và hành vi
 
-- System message của llama.cpp áp dụng cho layout, nhận dạng khối, end-to-end và các lần repeat-retry. vLLM không có message này để giữ hành vi cũ.
+- Cả hai backend chỉ gửi user message (ảnh + prompt) trong mọi lời gọi: layout, nhận dạng khối, end-to-end và repeat-retry. Trước #18, gateway thêm system message `You are a helpful assistant.` cho llama.cpp theo model card GGUF. Dòng này không có trong template train (`default_system=None`), trong `chat_template.jinja` của model gốc, trong template nhúng trong GGUF, hay trong đường server chính của Upstream. Chỉ `build_vllm_prompt` trong biến thể CPU của Upstream có nó. Khi không có system message, llama-server render prompt giống vLLM, và token bao ảnh `<|img|>`/`<|endofimg|>` mang đúng id của `<|vision_start|>`/`<|vision_end|>`. Cần dùng template Jinja của GGUF (mặc định ở build 12072): không chạy với `--no-jinja` hay `--chat-template`. Xem [kiểm tra #18](validation/llama-cpp-system-message.md).
 - Khi client không gửi `repetitionPenalty`, gateway không gửi trường penalty cho cả hai backend; server dùng mặc định của nó. Khi có, vLLM nhận `repetition_penalty`; llama-server nhận `repeat_penalty`. Gửi nguyên tên của vLLM cho llama-server có thể bị bỏ qua im lặng.
 - Gateway **không** gửi `repeat_last_n` cho llama-server. Build 12072 mặc định xét 64 token gần nhất; giá trị 0 tắt penalty. Điều này không đảm bảo ngữ nghĩa toàn bộ chuỗi của vLLM. Không dùng quyết định cũ `repeat_last_n=-1` trong #13: #17 đã thay thế nó sau khi tái hiện HTTP 400 trên build 12072. Phiên bản và cấu hình của deployment báo lỗi ban đầu chưa được xác định; không suy rộng kết quả cho mọi phiên bản. Xem [kiểm tra và giới hạn #17](validation/llama-cpp-repeat-penalty.md).
 - `temperature` (mặc định 0, greedy), `topP` → `top_p`, `maxNewTokens` → `max_tokens`, model, prompt và image data URI được xử lý giống nhau. Gateway vẫn resize ảnh theo giới hạn pixel như Upstream; không có nhánh tiền xử lý ảnh riêng cho llama.cpp.
@@ -72,6 +72,6 @@ Với cả hai, kiểm tra `curl -i http://127.0.0.1:8080/health/ready` trước
 
 Không kỳ vọng output khớp từng token: GGUF dùng quantization Q8_0, vision encoder đã chuyển đổi và engine khác với model gốc trên vLLM. Cùng temperature 0 không chứng minh hai backend cho cùng output hoặc cùng độ chính xác.
 
-[So sánh thủ công #16](validation/llama-cpp.md) trên A100 dùng vLLM 0.11.2 và llama.cpp CUDA build 12072: hai ảnh tổng hợp, cả hai chế độ, có Markdown CER 0 và cùng số, nhãn, nội dung khối. Tuy nhiên, **cả hai request two-stage trên cả hai backend đều có output suy luận bị cắt do giới hạn token**; kết quả có thể không đầy đủ. Đây là phép đo độ lệch so với vLLM, không phải benchmark độ chính xác hay bằng chứng tương đương tổng quát. Không có ngưỡng pass/fail; script không chạy trong pytest. Báo cáo, response thô và lệnh tái hiện nằm trong [validation/llama-cpp](validation/llama-cpp/).
+[So sánh thủ công #16](validation/llama-cpp.md) trên A100 dùng vLLM 0.11.2 và llama.cpp CUDA build 12072: hai ảnh tổng hợp, cả hai chế độ, có Markdown CER 0 và cùng số, nhãn, nội dung khối. Tuy nhiên, **cả hai request two-stage trên cả hai backend đều có output suy luận bị cắt do giới hạn token**; kết quả có thể không đầy đủ. Đây là phép đo độ lệch so với vLLM, không phải benchmark độ chính xác hay bằng chứng tương đương tổng quát. Không có ngưỡng pass/fail; script không chạy trong pytest. Báo cáo, response thô và lệnh tái hiện nằm trong [validation/llama-cpp](validation/llama-cpp/). Lần chạy đó còn gửi system message cho llama.cpp. [Chạy lại sau #18](validation/llama-cpp-system-message.md) với cùng cấu hình: lần trước có một bbox lệch 2 px, lần này cả label, nội dung và bbox của mọi khối đều khớp vLLM trong cả bốn trường hợp. Giới hạn về mẫu nhỏ và output bị cắt vẫn giữ nguyên.
 
 Kiểm thử tự động dùng fake server để kiểm tra payload, response và xử lý lỗi; không thay thế chạy model thật. Khi đánh giá dữ liệu riêng, chỉ lưu fixture và kết quả công khai hoặc tổng hợp, không đưa dữ liệu nhạy cảm từ `legal-vi-ocr` vào repo.

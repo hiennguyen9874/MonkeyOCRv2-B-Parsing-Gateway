@@ -213,14 +213,14 @@ def test_request_generation_options_reach_vllm(fake_vllm, monkeypatch, mode, bac
         assert payload["temperature"] == 0.3
         assert payload["top_p"] == 0.8
         assert payload["max_tokens"] == 777
+        # Both backends send only the user message, as the model's chat template
+        # and Upstream's server path expect (issue #18).
+        assert [m["role"] for m in payload["messages"]] == ["user"]
         if backend == "llama-cpp":
-            assert payload["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
-            assert [m["role"] for m in payload["messages"]] == ["system", "user"]
             assert payload["repeat_penalty"] == 1.05
             assert "repeat_last_n" not in payload
             assert "repetition_penalty" not in payload
         else:
-            assert [m["role"] for m in payload["messages"]] == ["user"]
             assert payload["repetition_penalty"] == 1.05
             assert "repeat_penalty" not in payload and "repeat_last_n" not in payload
 

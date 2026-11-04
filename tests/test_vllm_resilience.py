@@ -200,12 +200,11 @@ def test_repeat_retry_asks_again_with_rising_temperature(fake_vllm, monkeypatch,
     assert [(c["temperature"], c.get("top_p")) for c in calls] == [(0, None), (0.2, 0.95), (0.4, 0.95)]
     # Other generation options are kept on retries.
     for call in calls:
+        assert [m["role"] for m in call["messages"]] == ["user"]
         if backend == "llama-cpp":
-            assert call["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
             assert call["repeat_penalty"] == 1.05 and "repeat_last_n" not in call
             assert "repetition_penalty" not in call
         else:
-            assert [m["role"] for m in call["messages"]] == ["user"]
             assert call["repetition_penalty"] == 1.05
     # Layout output is never retried, as in Upstream.
     assert len(_calls(fake_vllm, LAYOUT_PROMPT)) == (1 if mode == "two-stage" else 0)

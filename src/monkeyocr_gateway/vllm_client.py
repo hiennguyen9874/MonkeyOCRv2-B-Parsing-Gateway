@@ -111,8 +111,6 @@ class VLLMClient:
                 ],
             }],
         }
-        if self._backend == "llama-cpp":
-            payload["messages"].insert(0, {"role": "system", "content": "You are a helpful assistant."})
         if options.max_new_tokens is not None:
             max_tokens = options.max_new_tokens
         if max_tokens is not None:
