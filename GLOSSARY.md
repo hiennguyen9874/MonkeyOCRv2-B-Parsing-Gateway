@@ -30,6 +30,12 @@ _Avoid_: label gốc, category
 Tên loại Khối theo từ vựng PaddleOCR-VL mà client nhận (ví dụ `text`, `paragraph_title`, `header`).
 _Avoid_: block type, label chuẩn
 
+## Suy luận
+
+**Máy chủ suy luận** (inference server):
+Máy chủ tương thích OpenAI chạy mô hình MonkeyOCRv2 mà gateway gửi yêu cầu suy luận tới; là vLLM hoặc llama-server.
+_Avoid_: vLLM (khi muốn nói chung cho cả hai), backend, engine
+
 ## Nguồn tham chiếu
 
 **Upstream**:
