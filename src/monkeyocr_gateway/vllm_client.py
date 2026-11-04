@@ -69,18 +69,18 @@ class VLLMClient:
             async with asyncio.timeout(self._health_check_timeout):
                 health = await self._http.get(self._health_url)
                 if health.status_code != 200:
-                    return f"vLLM server not ready: /health returned HTTP {health.status_code}"
+                    return f"Inference server not ready: /health returned HTTP {health.status_code}"
                 models = await self._http.get("/models")
                 models.raise_for_status()
                 served = [model["id"] for model in models.json()["data"]]
         except TimeoutError:
-            return f"vLLM health check timed out after {self._health_check_timeout}s"
+            return f"Inference server health check timed out after {self._health_check_timeout}s"
         except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-            return f"vLLM server not reachable: {type(exc).__name__}: {exc}"
+            return f"Inference server not reachable: {type(exc).__name__}: {exc}"
         if self._model not in served:
             return (
                 f"Served model {self._model!r} (MOCR2_SERVED_MODEL_NAME) not found in "
-                f"vLLM /v1/models: {served}"
+                f"inference server /v1/models: {served}"
             )
         return None
 
@@ -127,14 +127,14 @@ class VLLMClient:
                 payload["repetition_penalty"] = options.repetition_penalty
         response = await self._post_with_retries(payload)
         if response.is_error:
-            raise VLLMError(500, f"vLLM returned HTTP {response.status_code}: {response.text[:500]}")
+            raise VLLMError(500, f"Inference server returned HTTP {response.status_code}: {response.text[:500]}")
         try:
             choice = response.json()["choices"][0]
             content = choice["message"]["content"]
         except (ValueError, KeyError, IndexError, TypeError) as exc:
-            raise VLLMError(500, f"vLLM returned a malformed chat completion: {exc!r}") from None
+            raise VLLMError(500, f"Inference server returned a malformed chat completion: {exc!r}") from None
         if choice.get("finish_reason") == "length":
-            logger.warning("vLLM output hit max_tokens (finish reason length); keeping partial content")
+            logger.warning("Inference server output hit max_tokens (finish reason length); keeping partial content")
         return content
 
     async def _post_with_retries(self, payload: dict) -> httpx.Response:
@@ -152,7 +152,7 @@ class VLLMClient:
                 async with self._inflight:
                     response = await self._http.post("/chat/completions", json=payload)
             except httpx.TimeoutException:
-                raise VLLMError(504, f"vLLM did not answer within {self._timeout}s (MOCR2_REQUEST_TIMEOUT)") from None
+                raise VLLMError(504, f"Inference server did not answer within {self._timeout}s (MOCR2_REQUEST_TIMEOUT)") from None
             except httpx.TransportError as exc:
                 last_error = f"{type(exc).__name__}: {exc}"
                 continue
@@ -160,7 +160,8 @@ class VLLMClient:
                 return response
             last_error = f"HTTP {response.status_code}: {response.text[:500]}"
         raise VLLMError(
-            503, f"vLLM unavailable after {self._max_retries + 1} attempts: {last_error}"
+            503, f"Inference server unavailable after {self._max_retries + 1} attempts "
+            f"(MOCR2_HTTP_MAX_RETRIES): {last_error}"
         )
 
     async def aclose(self) -> None:

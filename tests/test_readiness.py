@@ -15,6 +15,8 @@ def _assert_not_ready(response, *words):
     body = response.json()
     assert body["errorCode"] == 503
     assert isinstance(body["logId"], str) and body["logId"]
+    assert "inference server" in body["errorMsg"].lower()
+    assert "vllm" not in body["errorMsg"].lower()
     for word in words:
         assert word in body["errorMsg"]
 
@@ -40,14 +42,14 @@ def test_server_url_with_v1_suffix_still_checks_root_health(fake_vllm, monkeypat
 def test_not_ready_when_vllm_health_fails(gateway, fake_vllm):
     fake_vllm.health_status = 500
 
-    _assert_not_ready(gateway.get("/health/ready"), "vLLM")
+    _assert_not_ready(gateway.get("/health/ready"), "/health", "HTTP 500")
     assert fake_vllm.get_paths == ["/health"]
 
 
 def test_not_ready_when_configured_model_is_not_served(gateway, fake_vllm):
     fake_vllm.served_models = ["other-model"]
 
-    _assert_not_ready(gateway.get("/health/ready"), "fake-monkey", "/v1/models")
+    _assert_not_ready(gateway.get("/health/ready"), "fake-monkey", "MOCR2_SERVED_MODEL_NAME", "/v1/models")
 
 
 def test_not_ready_when_vllm_is_unreachable(monkeypatch):
@@ -57,7 +59,7 @@ def test_not_ready_when_vllm_is_unreachable(monkeypatch):
     # Nothing listens on the port once the socket is closed.
     monkeypatch.setenv("MOCR2_SERVER_URL", f"http://127.0.0.1:{port}")
     with TestClient(create_app()) as client:
-        _assert_not_ready(client.get("/health/ready"), "vLLM")
+        _assert_not_ready(client.get("/health/ready"), "not reachable")
 
 
 def test_not_ready_when_vllm_times_out_within_the_configured_timeout(fake_vllm, monkeypatch):

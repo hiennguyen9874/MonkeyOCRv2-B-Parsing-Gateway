@@ -62,6 +62,8 @@ def _error(response, status: int, *words: str) -> dict:
     body = response.json()
     assert set(body) == {"logId", "errorCode", "errorMsg"}
     assert body["errorCode"] == status
+    assert "inference server" in body["errorMsg"].lower()
+    assert "vllm" not in body["errorMsg"].lower()
     for word in words:
         assert word in body["errorMsg"]
     return body
@@ -100,7 +102,7 @@ def test_vllm_failing_after_retries_fails_the_whole_request(fake_vllm, monkeypat
     monkeypatch.setenv("MOCR2_HTTP_MAX_RETRIES", "2")
     fake_vllm.answers[CONTENT_PROMPT[mode]] = failing_status
     with TestClient(create_app()) as client:
-        body = _error(_post(client, mode, logId="client-log"), 503, "vLLM", "3 attempts")
+        body = _error(_post(client, mode, logId="client-log"), 503, "3 attempts", "MOCR2_HTTP_MAX_RETRIES")
         assert body["logId"] == "client-log"
         # The gateway keeps serving once vLLM recovers.
         fake_vllm.answers[CONTENT_PROMPT[mode]] = {"two-stage": TEXT, "end-to-end": END2END_ONE_TEXT}[mode]
@@ -117,7 +119,7 @@ def test_unreachable_vllm_is_503_after_retrying_the_connection(monkeypatch):
     monkeypatch.setenv("MOCR2_HTTP_MAX_RETRIES", "1")
     monkeypatch.setenv("MOCR2_HTTP_RETRY_BACKOFF", "0")
     with TestClient(create_app()) as client:
-        _error(_post(client), 503, "vLLM", "2 attempts", "Connect")
+        _error(_post(client), 503, "2 attempts", "Connect", "MOCR2_HTTP_MAX_RETRIES")
 
 
 def test_non_retryable_vllm_error_is_500_without_retry(fake_vllm):
@@ -155,11 +157,23 @@ def test_vllm_connect_timeout_is_504_without_retry(fake_vllm, monkeypatch):
     assert fake_vllm.requests == []
 
 
-def test_finish_reason_length_keeps_partial_content(fake_vllm):
+def test_finish_reason_length_keeps_partial_content(fake_vllm, caplog):
     fake_vllm.finish_reason = "length"
     fake_vllm.answers[TEXT_PROMPT] = "Điều 1. Văn bản bị cắt ng"
     with TestClient(create_app()) as client:
         assert _contents(_post(client)) == ["Điều 1. Văn bản bị cắt ng"]
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert any("inference server" in message.lower() and "finish reason length" in message for message in warnings)
+    assert all("vllm" not in message.lower() for message in warnings)
+
+
+def test_malformed_completion_is_500(fake_vllm, monkeypatch):
+    async def malformed_response(_transport, request):
+        return httpx.Response(200, json={"choices": []}, request=request)
+
+    monkeypatch.setattr(httpx.AsyncHTTPTransport, "handle_async_request", malformed_response)
+    with TestClient(create_app()) as client:
+        _error(_post(client, "end-to-end"), 500, "malformed chat completion")
 
 
 @pytest.mark.parametrize("mode", ["two-stage", "end-to-end"])
