@@ -126,6 +126,8 @@ MOCR2_SERVED_MODEL_NAME=MonkeyOCRv2 \
 
 Check `curl -i http://127.0.0.1:8080/health/ready`: it returns 503 while the model is loading and 200 once the server is healthy and lists the configured alias. Use the image/PDF example above with `uv run --locked` instead of the vLLM extra. Two-stage parsing is the default; set `MOCR2_PARSING_MODE=end-to-end` on the gateway or send `vlmExtraArgs.parsingMode` to select end-to-end parsing.
 
+To compare both backends on synthetic pages in both modes, see the [manual GPU comparison](docs/validation/llama-cpp.md). It saves raw responses, Markdown CER, block differences, and the reproduction command; it has no pass/fail threshold and does not run in pytest.
+
 ## Configuration and tests
 
 Two-stage parsing is the default. Set `MOCR2_PARSING_MODE=end-to-end` to change the default, or send `vlmExtraArgs.parsingMode` per request. URL input is disabled unless its host and every redirect host are in `MOCR2_URL_ALLOWLIST`; base64 input does not require an allowlist. Document orientation and unwarping are not supported.
