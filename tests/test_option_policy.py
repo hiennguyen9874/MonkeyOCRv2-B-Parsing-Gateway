@@ -12,7 +12,10 @@ import re
 from urllib.parse import unquote
 
 import pytest
+from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict, Field
+
+from monkeyocr_gateway.app import create_app
 
 from conftest import END2END_PROMPT, LAYOUT_PROMPT, TEXT_PROMPT, image_base64
 from fake_vllm import request_image, request_prompt
@@ -189,9 +192,15 @@ def test_request_min_max_pixels_do_not_change_the_image_sent_to_vllm(gateway, fa
     assert sorted(with_pixels) == sorted(baseline)
 
 
+@pytest.mark.parametrize("backend", [None, "vllm", "llama-cpp"])
 @pytest.mark.parametrize("mode", MODES)
-def test_request_generation_options_reach_vllm(gateway, fake_vllm, mode):
-    response = _post(gateway, mode, temperature=0.3, topP=0.8, repetitionPenalty=1.05, maxNewTokens=777)
+def test_request_generation_options_reach_vllm(fake_vllm, monkeypatch, mode, backend):
+    if backend is None:
+        monkeypatch.delenv("MOCR2_SERVER_BACKEND", raising=False)
+    else:
+        monkeypatch.setenv("MOCR2_SERVER_BACKEND", backend)
+    with TestClient(create_app()) as gateway:
+        response = _post(gateway, mode, temperature=0.3, topP=0.8, repetitionPenalty=1.05, maxNewTokens=777)
 
     assert response.status_code == 200, response.text
     assert fake_vllm.requests
@@ -199,13 +208,25 @@ def test_request_generation_options_reach_vllm(gateway, fake_vllm, mode):
         payload = request["payload"]
         assert payload["temperature"] == 0.3
         assert payload["top_p"] == 0.8
-        assert payload["repetition_penalty"] == 1.05
         assert payload["max_tokens"] == 777
+        if backend == "llama-cpp":
+            assert payload["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
+            assert [m["role"] for m in payload["messages"]] == ["system", "user"]
+            assert payload["repeat_penalty"] == 1.05
+            assert payload["repeat_last_n"] == -1
+            assert "repetition_penalty" not in payload
+        else:
+            assert [m["role"] for m in payload["messages"]] == ["user"]
+            assert payload["repetition_penalty"] == 1.05
+            assert "repeat_penalty" not in payload and "repeat_last_n" not in payload
 
 
+@pytest.mark.parametrize("backend", ["vllm", "llama-cpp"])
 @pytest.mark.parametrize("mode", MODES)
-def test_null_generation_options_use_upstream_defaults(gateway, fake_vllm, mode):
-    response = _post(gateway, mode, temperature=None, topP=None, repetitionPenalty=None, maxNewTokens=None)
+def test_null_generation_options_use_upstream_defaults(fake_vllm, monkeypatch, mode, backend):
+    monkeypatch.setenv("MOCR2_SERVER_BACKEND", backend)
+    with TestClient(create_app()) as gateway:
+        response = _post(gateway, mode, temperature=None, topP=None, repetitionPenalty=None, maxNewTokens=None)
 
     assert response.status_code == 200, response.text
     expected_max_tokens = {LAYOUT_PROMPT: 4096, END2END_PROMPT: None}
@@ -213,7 +234,7 @@ def test_null_generation_options_use_upstream_defaults(gateway, fake_vllm, mode)
         payload = request["payload"]
         assert payload["temperature"] == 0
         assert "top_p" not in payload
-        assert "repetition_penalty" not in payload
+        assert not {"repetition_penalty", "repeat_penalty", "repeat_last_n"} & payload.keys()
         assert payload.get("max_tokens") == expected_max_tokens.get(request_prompt(payload), 5000)
     prompts = {request_prompt(r["payload"]) for r in fake_vllm.requests}
     assert (TEXT_PROMPT in prompts) == (mode == "two-stage")

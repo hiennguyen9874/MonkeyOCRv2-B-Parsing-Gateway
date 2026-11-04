@@ -214,6 +214,13 @@ def test_invalid_parsing_mode_is_422_with_clear_message(gateway, fake_vllm, mode
     assert fake_vllm.requests == []
 
 
+@pytest.mark.parametrize("backend", ["", "llama", "VLLM"])
+def test_invalid_backend_in_env_fails_at_startup(monkeypatch, backend):
+    monkeypatch.setenv("MOCR2_SERVER_BACKEND", backend)
+    with pytest.raises(ValueError, match="MOCR2_SERVER_BACKEND.*vllm.*llama-cpp"):
+        create_app()
+
+
 def test_invalid_default_mode_in_env_fails_at_startup(monkeypatch):
     monkeypatch.setenv("MOCR2_PARSING_MODE", "fast")
     with pytest.raises(ValueError, match="MOCR2_PARSING_MODE"):

@@ -171,8 +171,10 @@ def test_repeat_retry_is_off_by_default(fake_vllm, mode):
     assert len(_calls(fake_vllm, CONTENT_PROMPT[mode])) == 1
 
 
+@pytest.mark.parametrize("backend", ["vllm", "llama-cpp"])
 @pytest.mark.parametrize("mode", ["two-stage", "end-to-end"])
-def test_repeat_retry_asks_again_with_rising_temperature(fake_vllm, monkeypatch, mode):
+def test_repeat_retry_asks_again_with_rising_temperature(fake_vllm, monkeypatch, mode, backend):
+    monkeypatch.setenv("MOCR2_SERVER_BACKEND", backend)
     monkeypatch.setenv("MOCR2_RETRY_REPEAT", "1")
     good = {"two-stage": TEXT, "end-to-end": END2END_ONE_TEXT}[mode]
     answers = iter([REPEATED, REPEATED, good])
@@ -183,7 +185,14 @@ def test_repeat_retry_asks_again_with_rising_temperature(fake_vllm, monkeypatch,
     calls = _calls(fake_vllm, CONTENT_PROMPT[mode])
     assert [(c["temperature"], c.get("top_p")) for c in calls] == [(0, None), (0.2, 0.95), (0.4, 0.95)]
     # Other generation options are kept on retries.
-    assert {c["repetition_penalty"] for c in calls} == {1.05}
+    for call in calls:
+        if backend == "llama-cpp":
+            assert call["messages"][0] == {"role": "system", "content": "You are a helpful assistant."}
+            assert call["repeat_penalty"] == 1.05 and call["repeat_last_n"] == -1
+            assert "repetition_penalty" not in call
+        else:
+            assert [m["role"] for m in call["messages"]] == ["user"]
+            assert call["repetition_penalty"] == 1.05
     # Layout output is never retried, as in Upstream.
     assert len(_calls(fake_vllm, LAYOUT_PROMPT)) == (1 if mode == "two-stage" else 0)
 

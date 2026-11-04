@@ -60,6 +60,7 @@ class VLLMClient:
         self._health_url = base_url.removesuffix("/v1") + "/health"
         self._health_check_timeout = settings.health_check_timeout
         self._model = settings.served_model_name
+        self._backend = settings.server_backend
         self._max_pixels = settings.max_pixels
 
     async def check_ready(self) -> str | None:
@@ -110,15 +111,20 @@ class VLLMClient:
                 ],
             }],
         }
+        if self._backend == "llama-cpp":
+            payload["messages"].insert(0, {"role": "system", "content": "You are a helpful assistant."})
         if options.max_new_tokens is not None:
             max_tokens = options.max_new_tokens
         if max_tokens is not None:
             payload["max_tokens"] = max_tokens
         if options.top_p is not None:
             payload["top_p"] = options.top_p
-        # Upstream never sends it; vLLM accepts it as an extra sampling parameter.
         if options.repetition_penalty is not None:
-            payload["repetition_penalty"] = options.repetition_penalty
+            if self._backend == "llama-cpp":
+                payload["repeat_penalty"] = options.repetition_penalty
+                payload["repeat_last_n"] = -1
+            else:
+                payload["repetition_penalty"] = options.repetition_penalty
         response = await self._post_with_retries(payload)
         if response.is_error:
             raise VLLMError(500, f"vLLM returned HTTP {response.status_code}: {response.text[:500]}")

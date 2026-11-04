@@ -39,8 +39,13 @@ class Settings:
     url_allowlist: tuple[str, ...] = ()
     # Seconds allowed to download a file URL, redirects included.
     url_fetch_timeout: float = 30.0
+    server_backend: str = "vllm"
 
     def __post_init__(self) -> None:
+        if self.server_backend not in ("vllm", "llama-cpp"):
+            raise ValueError(
+                f"MOCR2_SERVER_BACKEND must be 'vllm' or 'llama-cpp', got {self.server_backend!r}"
+            )
         for name, value in [
             ("MOCR2_PAGE_CONCURRENCY", self.page_concurrency),
             ("MOCR2_REQUEST_CONCURRENCY", self.request_concurrency),
@@ -66,6 +71,7 @@ class Settings:
             max_pixels=int(os.getenv("MOCR2_MAX_PIXELS", "1003520")),
             request_timeout=float(os.getenv("MOCR2_REQUEST_TIMEOUT", "300")),
             default_parsing_mode=default_parsing_mode,
+            server_backend=os.getenv("MOCR2_SERVER_BACKEND", "vllm"),
             page_concurrency=int(os.getenv("MOCR2_PAGE_CONCURRENCY", "8")),
             max_pages=int(os.getenv("MOCR2_MAX_PAGES", "0")),
             max_body_bytes=int(os.getenv("MOCR2_MAX_BODY_BYTES", str(100 * 1024 * 1024))),

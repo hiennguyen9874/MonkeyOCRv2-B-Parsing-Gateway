@@ -24,7 +24,7 @@ def request_image(payload: dict) -> Image.Image:
     """Decode the PNG data URI sent in a chat payload."""
     url = next(
         item["image_url"]["url"]
-        for item in payload["messages"][0]["content"]
+        for item in next(m["content"] for m in payload["messages"] if m["role"] == "user")
         if item["type"] == "image_url"
     )
     return Image.open(BytesIO(base64.b64decode(url.split(",", 1)[1])))
@@ -32,7 +32,8 @@ def request_image(payload: dict) -> Image.Image:
 
 def request_prompt(payload: dict) -> str:
     return next(
-        item["text"] for item in payload["messages"][0]["content"] if item["type"] == "text"
+        item["text"] for item in next(m["content"] for m in payload["messages"] if m["role"] == "user")
+        if item["type"] == "text"
     )
 
 
