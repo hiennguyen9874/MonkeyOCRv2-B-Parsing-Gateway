@@ -14,7 +14,7 @@ A FastAPI gateway that serves the PaddleOCR-VL `/layout-parsing` contract in fro
 
 ## Invariants
 
-- Upstream (`references/MonkeyOCRv2` at `106914e`) is the authority for prompts, output parsing, cropping, and token/pixel limits. Port its helpers with the source revision noted and add a parity test. The gateway itself stays free of torch and GPUs (ADR-0003).
+- Upstream (`references/MonkeyOCRv2` at `106914e`) is the authority for prompts, output parsing, cropping, and token/pixel limits. Port its helpers with the source revision noted and add a parity test. The gateway itself stays free of torch and GPUs (ADR-0003). The one recorded exception: two-stage mode also recognizes Footnote with Upstream's Text prompt (`GATEWAY_EXTRA_PROMPTS`, ADR-0006).
 - Tests use two seams: (1) the gateway HTTP API running in-process against a fake OpenAI-compatible vLLM that replays recorded Monkey output, and (2) parity tests on the ported helpers. Real GPU runs belong only to the manual smoke script.
 - Outputs from the sibling `legal-vi-ocr` repo contain sensitive documents. Read them to learn the shape. Build fixtures here only from synthetic or public material.
 
