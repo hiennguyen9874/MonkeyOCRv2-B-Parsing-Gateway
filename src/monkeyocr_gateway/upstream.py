@@ -17,8 +17,9 @@ from PIL import Image, ImageOps
 
 UPSTREAM_REVISION = "106914e"
 
-# core_runner.ALL_PROMPT. Labels missing here (Footnote, Picture, ...) are not
-# recognized in two-stage mode.
+# core_runner.ALL_PROMPT, kept identical to Upstream. Upstream leaves Footnote
+# and Picture without a prompt; the gateway adds Footnote back through
+# GATEWAY_EXTRA_PROMPTS (ADR-0006).
 ALL_PROMPT = {
     "Caption": "Please output the text content from the image.",
     # "Footnote": "Please output the text content from the image.",
@@ -32,6 +33,14 @@ ALL_PROMPT = {
     "Table": "Please extract the table from the image and represent it in OTSL format.",
     "LAYOUT": "Please output the categories and coordinates of the document elements in reading order.",
     "END2END": "List the document elements in reading order, including their categories, coordinates, and the content of each element.",
+}
+
+# Gateway extension, not Upstream (ADR-0006, issue #19): Nhãn Monkey that
+# Upstream's ALL_PROMPT leaves unrecognized but the gateway recognizes in
+# two-stage mode. Upstream's training README lists Footnote among the labels that
+# use the Text Recognition prompt, so the prompt is Upstream's own Text prompt.
+GATEWAY_EXTRA_PROMPTS = {
+    "Footnote": ALL_PROMPT["Text"],
 }
 
 # core_runner.get_layout and _recognize_one_block request limits.

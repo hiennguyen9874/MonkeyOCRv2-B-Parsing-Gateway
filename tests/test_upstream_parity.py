@@ -25,6 +25,7 @@ from monkeyocr_gateway.document_loader import PDFIUM_LOCK, PdfDocument
 
 from monkeyocr_gateway.upstream import (
     ALL_PROMPT,
+    GATEWAY_EXTRA_PROMPTS,
     _build_page_tasks,
     _map_bbox_to_image,
     _should_retry_repeat_output,
@@ -181,6 +182,20 @@ def test_all_prompt_matches_upstream_source():
         and any(isinstance(target, ast.Name) and target.id == "ALL_PROMPT" for target in node.targets)
     )
     assert ALL_PROMPT == upstream
+
+
+def test_gateway_extra_prompts_are_a_recorded_exception_to_upstream():
+    # ADR-0006: only Footnote is added, Upstream leaves it out of ALL_PROMPT, and
+    # it reuses Upstream's Text prompt (Upstream's training README lists Footnote
+    # among the Text Recognition labels). Picture stays unrecognized.
+    assert GATEWAY_EXTRA_PROMPTS == {"Footnote": ALL_PROMPT["Text"]}
+    assert set(GATEWAY_EXTRA_PROMPTS).isdisjoint(ALL_PROMPT)
+    readme = CORE_RUNNER.parent / "train" / "README.md"
+    if not readme.exists():
+        pytest.skip("references/MonkeyOCRv2 is not checked out (git submodule update --init)")
+    text_labels = re.search(r"all categories except (.+?) use the \*\*Text Recognition\*\* prompt", readme.read_text())
+    assert text_labels and "Footnote" not in text_labels.group(1)
+    assert "`Footnote`" in readme.read_text()
 
 
 # --- test_fake_model_pipeline.py / test_fake_server_pipeline.py (get_layout) --

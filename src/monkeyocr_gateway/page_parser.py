@@ -9,6 +9,7 @@ from PIL import Image
 
 from .upstream import (
     ALL_PROMPT,
+    GATEWAY_EXTRA_PROMPTS,
     LAYOUT_MAX_TOKENS,
     LAYOUT_MIN_PIXELS,
     RECOGNITION_MAX_TOKENS,
@@ -89,7 +90,10 @@ async def _parse_two_stage(
 ) -> list[dict]:
     """Chế độ hai giai đoạn, as Upstream's ServicePipelinePool._parse_page does it:
     layout on the whole page, then recognize each prompted Khối cropped from the
-    full-resolution page. Khối whose label has no prompt keep empty content."""
+    full-resolution page. Khối whose label has no prompt keep empty content.
+
+    One deliberate difference from Upstream (ADR-0006): Khối with a label in
+    GATEWAY_EXTRA_PROMPTS (Footnote) are recognized too."""
     raw_layout = await vllm.chat(
         image,
         ALL_PROMPT["LAYOUT"],
@@ -98,6 +102,10 @@ async def _parse_two_stage(
         max_tokens=LAYOUT_MAX_TOKENS,
     )
     tasks = _build_page_tasks(0, image, parse_layout_output(raw_layout, image.size))
+    for task in tasks:
+        if not task["need_infer"] and task["label"] in GATEWAY_EXTRA_PROMPTS:
+            task["question"] = GATEWAY_EXTRA_PROMPTS[task["label"]]
+            task["need_infer"] = True
 
     async def recognize(task: dict) -> str:
         if not task["need_infer"]:

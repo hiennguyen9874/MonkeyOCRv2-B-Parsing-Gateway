@@ -38,6 +38,7 @@ PROMPT_BY_LABEL = {
     "Text": TEXT_PROMPT,
     "Formula": FORMULA_PROMPT,
     "Table": TABLE_PROMPT,
+    "Footnote": TEXT_PROMPT,  # gateway extension, ADR-0006
     "Page-footer": TEXT_PROMPT,
 }
 CONTENT_BY_LABEL = {
@@ -45,6 +46,7 @@ CONTENT_BY_LABEL = {
     "Text": "Điều 1. Văn bản này là dữ liệu tổng hợp.",
     "Formula": "E = m c^{2}",
     "Table": "<fcel>A<fcel>B<nl><fcel>1<fcel>2<nl>",
+    "Footnote": "(1) Chú thích tổng hợp về căn cứ ban hành.",
     "Page-footer": "Trang 1",
 }
 
@@ -118,7 +120,7 @@ def test_two_stage_sends_one_layout_request_then_one_recognition_per_prompted_kh
         assert crop.size == expected.size
         assert ImageChops.difference(crop.convert("RGB"), expected).getbbox() is None
         received[block["label"]] = received.get(block["label"], 0) + 1
-    assert received == {"Title": 1, "Text": 1, "Formula": 1, "Table": 1, "Page-footer": 1}
+    assert received == {"Title": 1, "Text": 1, "Formula": 1, "Table": 1, "Footnote": 1, "Page-footer": 1}
 
 
 def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_order(gateway, fake_vllm):
@@ -128,7 +130,7 @@ def test_parsing_res_list_keeps_layout_order_when_recognition_finishes_out_of_or
     def recognize_out_of_order(image):
         label = _khối_of(image)["label"]
         prerequisites = {
-            "Text": {"Formula", "Table", "Page-footer"},
+            "Text": {"Formula", "Table", "Footnote", "Page-footer"},
             "Title": {"Text"},
         }.get(label, set())
         with fake_vllm.completed_condition:
@@ -164,10 +166,50 @@ def test_khối_without_a_prompt_keep_their_bbox_with_empty_content_and_no_reque
     items = {item["monkey_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
     assert items["Picture"]["block_bbox"] == [372, 1421, 868, 1473]
     assert items["Picture"]["block_content"] == ""
-    assert items["Footnote"]["block_bbox"] == [124, 1491, 1116, 1579]
-    assert items["Footnote"]["block_content"] == ""
     recognized = {_khối_of(request_image(r["payload"]))["label"] for r in fake_vllm.requests[1:]}
-    assert recognized.isdisjoint({"Picture", "Footnote"})
+    assert "Picture" not in recognized
+
+
+# Issue #19, ADR-0006: Upstream leaves Footnote without a prompt; the gateway
+# recognizes it with Upstream's Text prompt, as PaddleOCR-VL recognizes footnote.
+FOOTNOTE_TEXT = CONTENT_BY_LABEL["Footnote"]
+WEKNORA_IGNORE_LABELS = ["header", "header_image", "footer", "footer_image", "number", "aside_text"]
+
+
+def test_footnote_is_recognized_and_reaches_markdown_when_not_ignored(gateway, fake_vllm):
+    result = _first_page(
+        _post(gateway, vlmExtraArgs={"parsingMode": "two-stage"}, markdownIgnoreLabels=WEKNORA_IGNORE_LABELS)
+    )
+
+    items = {item["monkey_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
+    footnote = items["Footnote"]
+    assert footnote["block_label"] == "footnote"
+    assert footnote["block_bbox"] == [124, 1491, 1116, 1579]
+    assert footnote["block_content"] == FOOTNOTE_TEXT
+    markdown = result["markdown"]["text"]
+    assert FOOTNOTE_TEXT in markdown
+    assert CONTENT_BY_LABEL["Page-footer"] not in markdown  # footer still ignored
+    footnote_requests = [
+        r["payload"] for r in fake_vllm.requests[1:] if _khối_of(request_image(r["payload"]))["label"] == "Footnote"
+    ]
+    assert len(footnote_requests) == 1
+    assert request_prompt(footnote_requests[0]) == TEXT_PROMPT
+    assert footnote_requests[0]["max_tokens"] == 5000
+
+
+@pytest.mark.parametrize("ignore_labels", [None, ["footnote", *WEKNORA_IGNORE_LABELS]])
+def test_ignored_footnote_stays_out_of_markdown_but_keeps_its_content(gateway, fake_vllm, ignore_labels):
+    result = _first_page(
+        _post(gateway, vlmExtraArgs={"parsingMode": "two-stage"}, markdownIgnoreLabels=ignore_labels)
+    )
+
+    items = {item["monkey_label"]: item for item in result["prunedResult"]["parsing_res_list"]}
+    assert items["Footnote"]["block_label"] == "footnote"
+    assert items["Footnote"]["block_content"] == FOOTNOTE_TEXT
+    markdown = result["markdown"]["text"]
+    assert FOOTNOTE_TEXT not in markdown
+    assert CONTENT_BY_LABEL["Page-footer"] not in markdown
+    assert CONTENT_BY_LABEL["Text"] in markdown
 
 
 def test_layout_request_upscales_small_pages_to_upstream_min_pixels(gateway, fake_vllm):
