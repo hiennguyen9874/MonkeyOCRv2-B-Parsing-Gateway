@@ -41,15 +41,19 @@ async def parse_page(
     vllm: VLLMClient,
     options: GenerationOptions,
     repeat_retries: int = 0,
+    *,
+    issues: list[str] | None = None,
 ) -> list[dict]:
     """mode is one of config.PARSING_MODES. repeat_retries > 0 turns on Upstream's
     --retry-repeat for recognition and end-to-end output (layout is never retried).
 
     Returns Khối in reading order as {"bbox": [x1, y1, x2, y2] page pixels, "label", "content"}.
+    For two-stage OCR, issues optionally collects quality evidence across layout,
+    recognition and repeat retries; each routed request supplies its own list.
     """
     if mode == "end-to-end":
         return await _parse_end_to_end(image, vllm, options, repeat_retries)
-    return await _parse_two_stage(image, vllm, options, repeat_retries)
+    return await _parse_two_stage(image, vllm, options, repeat_retries, issues)
 
 
 async def _chat_with_repeat_retry(
@@ -59,16 +63,18 @@ async def _chat_with_repeat_retry(
     options: GenerationOptions,
     repeat_retries: int,
     max_tokens: int | None = None,
+    *,
+    issues: list[str] | None = None,
 ) -> str:
     """Upstream _recognize_one_block: while the output ends in repeated tokens, ask
     again with rising temperature and top_p 0.95, at most repeat_retries times."""
-    raw = await vllm.chat(image, prompt, options, max_tokens=max_tokens)
+    raw = await vllm.chat(image, prompt, options, max_tokens=max_tokens, issues=issues)
     for retry in range(repeat_retries):
         if not _should_retry_repeat_output(raw):
             break
         temperature, top_p = repeat_retry_sampling(retry)
         retry_options = replace(options, temperature=temperature, top_p=top_p)
-        raw = await vllm.chat(image, prompt, retry_options, max_tokens=max_tokens)
+        raw = await vllm.chat(image, prompt, retry_options, max_tokens=max_tokens, issues=issues)
     return raw
 
 
@@ -86,7 +92,8 @@ async def _parse_end_to_end(
 
 
 async def _parse_two_stage(
-    image: Image.Image, vllm: VLLMClient, options: GenerationOptions, repeat_retries: int
+    image: Image.Image, vllm: VLLMClient, options: GenerationOptions, repeat_retries: int,
+    issues: list[str] | None = None,
 ) -> list[dict]:
     """Chế độ hai giai đoạn, as Upstream's ServicePipelinePool._parse_page does it:
     layout on the whole page, then recognize each prompted Khối cropped from the
@@ -100,6 +107,7 @@ async def _parse_two_stage(
         options,
         min_pixels=LAYOUT_MIN_PIXELS,
         max_tokens=LAYOUT_MAX_TOKENS,
+        issues=issues,
     )
     tasks = _build_page_tasks(0, image, parse_layout_output(raw_layout, image.size))
     for task in tasks:
@@ -111,7 +119,8 @@ async def _parse_two_stage(
         if not task["need_infer"]:
             return ""
         return await _chat_with_repeat_retry(
-            vllm, task["image"], task["question"], options, repeat_retries, RECOGNITION_MAX_TOKENS
+            vllm, task["image"], task["question"], options, repeat_retries, RECOGNITION_MAX_TOKENS,
+            issues=issues,
         )
 
     raws = await gather_or_cancel([recognize(task) for task in tasks])

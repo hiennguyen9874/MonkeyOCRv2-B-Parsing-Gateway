@@ -205,6 +205,7 @@ async def recover_pictures(
     vllm: VLLMClient,
     options: GenerationOptions,
     repeat_retries: int,
+    issues: list[str] | None = None,
 ) -> list[dict]:
     """Recognize text-like Picture Khối of a supplement with Upstream's Text prompt.
 
@@ -220,7 +221,7 @@ async def recover_pictures(
     )
     raws = await gather_or_cancel([
         _chat_with_repeat_retry(vllm, Image.fromarray(candidate["image"]), ALL_PROMPT["Text"],
-                                options, repeat_retries, RECOGNITION_MAX_TOKENS)
+                                options, repeat_retries, RECOGNITION_MAX_TOKENS, issues=issues)
         for candidate in found
     ])
     reason = "text_like_ink_in_unrecognized_picture"
@@ -231,6 +232,40 @@ async def recover_pictures(
                                             "bbox": candidate["bbox"], "reason": reason}}}
         for candidate, raw in zip(found, raws)
     ]
+
+
+async def parse_ocr_request(
+    image: Image.Image,
+    request: dict,
+    vllm: VLLMClient,
+    options: GenerationOptions,
+    repeat_retries: int,
+) -> list[dict]:
+    """Shared PDF/image OCR quality conversion, after source convert_records at 6e7ad59.
+
+    The source marks all blocks in a prediction for review when it is truncated or
+    contains tables/pictures. Empty predictions still carry request-level evidence.
+    Keep this evidence local to the request, including supplemental picture recovery.
+    """
+    issues = request.setdefault("issues", [])
+    blocks = await parse_page(image, OCR_PARSING_MODE, vllm, options, repeat_retries, issues=issues)
+    request["blocks"] = len(blocks)
+    if not blocks:
+        issues.append("empty_output")
+    for label, code in (("Table", "table_review"), ("Picture", "picture_review")):
+        if any(block["label"] == label for block in blocks):
+            issues.append(code)
+    if request["masked_native_words"]:
+        # Only supplements opt into picture text recovery, as in the batch runner.
+        recovered = await recover_pictures(image, blocks, vllm, options, repeat_retries, issues)
+        request["picture_text_blocks"] = len(recovered)
+        if recovered:
+            issues.append("picture_text_recovery_review")
+        if any(not block["content"] for block in recovered):
+            issues.append("empty_picture_text_recovery")
+        blocks = blocks + recovered
+    return [{**block, "raw_text": block["content"], "source": "ocr", "review": bool(issues),
+             "config": dict(block.get("config", {}))} for block in blocks]
 
 
 def merge_prediction(page: dict, plan: dict, blocks: list[dict], request: dict) -> None:
@@ -267,7 +302,8 @@ def merge_prediction(page: dict, plan: dict, blocks: list[dict], request: dict) 
                   "masked_native_words": request["masked_native_words"], **block.get("config", {})}
         additions.append({"bbox": list(clipped), "label": block["label"], "content": block["content"],
                           "raw_text": block["content"], "source": "ocr",
-                          "review": supplement or "picture_text_source" in config, "config": config})
+                          "review": block.get("review", False) or supplement
+                          or "picture_text_source" in config, "config": config})
     page["blocks"].extend(additions)
     page["review"] |= supplement
     request["dropped_spatial_duplicates"] = dropped
@@ -311,18 +347,7 @@ async def parse_routed_page(
         if ocr_image is None:
             request["issues"] = ["empty_region"]
             return request, []
-        blocks = await parse_page(ocr_image, OCR_PARSING_MODE, vllm, options, repeat_retries)
-        request["blocks"] = len(blocks)
-        if request["masked_native_words"]:
-            # Only supplements opt into picture text recovery, as in the batch runner.
-            recovered = await recover_pictures(ocr_image, blocks, vllm, options, repeat_retries)
-            request["picture_text_blocks"] = len(recovered)
-            request["issues"] = []
-            if recovered:
-                request["issues"].append("picture_text_recovery_review")
-            if any(not block["content"] for block in recovered):
-                request["issues"].append("empty_picture_text_recovery")
-            blocks = blocks + recovered
+        blocks = await parse_ocr_request(ocr_image, request, vllm, options, repeat_retries)
         return request, blocks
 
     results = await gather_or_cancel([
@@ -347,13 +372,17 @@ async def parse_routed_image(
     repeat_retries: int = 0,
 ) -> tuple[list[dict], dict]:
     """An image input has no text layer: the whole page goes through two-stage OCR."""
-    blocks = await parse_page(image, OCR_PARSING_MODE, vllm, options, repeat_retries)
+    request = {"id": "request-0001", "region": None, "masked_native_words": False,
+               "padding_pixels": 0, "image_size": list(image.size)}
+    blocks = await parse_ocr_request(image, request, vllm, options, repeat_retries)
     routing = {
         "decision": "ocr", "reasons": ["image_input_without_text_layer"], "signals": {},
         "thresholds": asdict(GATE_CONFIG), "near_blank": False, "effective_mode": "full-ocr",
         "review_reasons": [], "retained_regions": [], "supplement_regions": [],
-        "requests": [{"id": "request-0001", "region": None, "masked_native_words": False,
-                      "padding_pixels": 0, "image_size": list(image.size), "blocks": len(blocks)}],
-        "page_type": "scan", "coordinate_unit": "pt", "review": False,
+        "requests": [request],
+        "page_type": "scan", "coordinate_unit": "pt",
     }
-    return [{**block, "source": "ocr", "review": False} for block in blocks], routing
+    page = {"blocks": blocks, "routing": routing, "review": False}
+    annotate(page)
+    routing["review"] = page["review"]
+    return blocks, routing

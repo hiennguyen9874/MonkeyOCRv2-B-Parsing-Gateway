@@ -7,8 +7,9 @@ manifest/replay/artifact paths are not ported: the gateway has no such paths.
 
 from __future__ import annotations
 
+import asyncio
 import copy
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import numpy as np
 import pymupdf
@@ -30,7 +31,8 @@ from monkeyocr_gateway.router.native_tables import (
 from monkeyocr_gateway.router.picture_recovery import candidates
 from monkeyocr_gateway.router.review import annotate, spatial_merge
 from monkeyocr_gateway.router.views import cell_display, table_html
-from monkeyocr_gateway.routed import native_block
+from monkeyocr_gateway.routed import native_block, parse_ocr_request
+from monkeyocr_gateway.vllm_client import GenerationOptions
 from router_pdfs import diagram, insertion_page, table_pdf
 
 FILE = {"path": "t.pdf", "sha256": "a" * 64}
@@ -117,6 +119,30 @@ def test_full_page_ocr_keeps_model_reading_order():
     page = {"blocks": list(blocks)}
     spatial_merge(page)
     assert page["blocks"] == blocks
+
+
+@pytest.mark.parametrize("labels,issues", [
+    ([], ["empty_output"]),
+    (["Text"], []),
+    (["Text", "Picture"], ["picture_review"]),
+    (["Text", "Table"], ["table_review"]),
+])
+def test_ocr_quality_matches_source_convert_records(labels, issues):
+    """legal-vi-ocr monkey_two_stage.convert_records / monkey.convert at 6e7ad59.
+
+    Empty output flags the page; a table/picture flags every block, not just itself.
+    The gateway carries page quality as request issues without altering predictions.
+    """
+    records = [{"label": label, "bbox": [0, 0, 100, 100], "content": "raw prediction"}
+               for label in labels]
+    before = copy.deepcopy(records)
+    request = {"masked_native_words": False}
+    with patch("monkeyocr_gateway.routed.parse_page", new_callable=AsyncMock, return_value=records):
+        blocks = asyncio.run(parse_ocr_request(None, request, None, GenerationOptions(), 0))
+    assert request["issues"] == issues
+    assert [b["review"] for b in blocks] == [bool(issues)] * len(records)
+    assert records == before
+    assert [{key: block[key] for key in ("label", "bbox", "content")} for block in blocks] == records
 
 
 def _routed_native_page(p):

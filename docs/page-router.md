@@ -79,10 +79,12 @@ Contract PaddleOCR-VL không đổi. Routed mode chỉ thêm các trường sau:
 
 Bảng có sẵn có `block_label: "table"` và HTML trong `block_content`. Picture do router giữ lại là Khối `image`. Crop của nó nằm trong `markdown.images`, như mọi Picture.
 
+PDF và ảnh đầu vào dùng chung kiểm tra review sau OCR. Output rỗng ghi `issues: ["empty_output"]` và cờ `ocr_empty_output`, ngay cả khi không có Khối. Prediction chứa Table hoặc Picture cần review ở mọi Khối, như converter của legal-vi-ocr; trang có cờ `table_requires_review` hoặc `picture_requires_review`. Kiểm tra script bất thường cũng chạy với ảnh đầu vào. Khi bất kỳ lần gọi layout, recognition, retry hay phục hồi chữ trong Picture bị cắt ở giới hạn token, request giữ `issues: ["truncated", ...]` và cờ `ocr_truncated`; nội dung trả về không bị sửa hay bỏ đi.
+
 ## Khác với batch runner của legal-vi-ocr
 
 - Không có manifest, kiểm hash ảnh chẩn đoán, `--prepare-only`, `--ocr-run` (replay) hay artifact trên đĩa. Gateway tự render trang. Test dùng fake server (seam 1) và parity test (seam 2).
-- Một lần gọi suy luận lỗi làm cả request lỗi (503/504/500), như hai chế độ kia. Không có trang `pending` hay `error`, nên cũng không có cờ `ocr_pending`, `ocr_failed`, `ocr_truncated`.
+- Một lần gọi suy luận lỗi làm cả request lỗi (503/504/500), như hai chế độ kia. Không có trang `pending` hay `error`, nên cũng không có cờ `ocr_pending`, `ocr_failed`. Output bị cắt vẫn trả thành công nhưng cần review (`ocr_truncated`).
 - Trang OCR cả trang giữ thứ tự Monkey. Batch runner sắp lại theo trên→dưới, trái→phải.
 - Mỗi trang được lập kế hoạch trên một bản sao PyMuPDF riêng. Trang có `/Rotate` không dò bảng (xem ADR-0007).
 - Ảnh đầu vào đi thẳng nhánh OCR cả trang, với `reasons: ["image_input_without_text_layer"]`.

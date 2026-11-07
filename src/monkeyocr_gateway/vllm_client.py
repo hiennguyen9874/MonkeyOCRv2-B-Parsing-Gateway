@@ -92,12 +92,14 @@ class VLLMClient:
         *,
         min_pixels: int | None = None,
         max_tokens: int | None = None,
+        issues: list[str] | None = None,
     ) -> str:
         """Send one image + prompt, mirroring MonkeyOCRv2_ServerParsing._chat_completion.
 
         max_tokens is the stage default, replaced by options.max_new_tokens when set.
         Raises VLLMError when the call fails after retries. Output cut at the token
-        limit (finish reason length) is returned as is.
+        limit (finish reason length) is returned as is. When supplied, issues collects
+        request-local quality evidence, including truncation, without changing the output.
         """
         image_uri = await asyncio.to_thread(_request_image_uri, image, self._max_pixels, min_pixels)
         payload = {
@@ -131,6 +133,8 @@ class VLLMClient:
         except (ValueError, KeyError, IndexError, TypeError) as exc:
             raise VLLMError(500, f"Inference server returned a malformed chat completion: {exc!r}") from None
         if choice.get("finish_reason") == "length":
+            if issues is not None and "truncated" not in issues:
+                issues.append("truncated")
             logger.warning("Inference server output hit max_tokens (finish reason length); keeping partial content")
         return content
 

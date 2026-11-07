@@ -30,7 +30,7 @@ Bảng có sẵn là HTML trong `block_content`. Khối có sẵn mang Nhãn Mon
 - Helper được port từ legal-vi-ocr `6e7ad59`. Mỗi file trong `router/` ghi rõ nguồn. `tests/test_router_parity.py` dùng lại các test tổng hợp của bên đó. Khi nâng revision, cần đối chiếu lại helper và các test này. Không copy fixture ghi từ corpus thật, vì đó là tài liệu nhạy cảm.
 - Router khác legal-vi-ocr ở các điểm sau, có ghi trong docstring:
   - Một lần gọi suy luận lỗi làm cả request lỗi, như hai chế độ kia. Vì vậy không có trạng thái `pending` hay `error` theo trang.
-  - Không theo dõi output bị cắt (`ocr_truncated`).
+  - Chất lượng OCR nằm trong `routing.requests[].issues` thay vì canonical page quality của batch runner. Output rỗng, Table/Picture và output bị cắt đều cần review; `ocr_truncated` áp dụng cho cả PDF và ảnh đầu vào. Nội dung bị cắt vẫn được giữ nguyên.
   - Trang OCR cả trang giữ thứ tự đọc của Monkey, thay vì sắp lại trên→dưới, trái→phải.
   - Mỗi trang được lập kế hoạch trên một bản sao tài liệu PyMuPDF riêng. Lý do: trên trang xoay, `find_tables()` ghi đè MediaBox và làm mất CropBox. Adapter bảng cũng gọi hàm này trên trang trước.
   - Trang có `/Rotate` khác 0 bỏ qua dò bảng và ghi `routing.native_tables_skipped = "rotated_page"`. Chữ trong bảng vẫn còn, dưới dạng Khối text. Lý do: `find_tables()` trả bảng theo trục đã xoay, còn adapter so với chữ theo trục chưa xoay. Thử trên trang tổng hợp, bảng bị loại nhưng không ghi `table_fallback`.

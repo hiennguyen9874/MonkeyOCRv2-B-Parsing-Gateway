@@ -312,7 +312,8 @@ def test_native_table_is_html_table_khoi(gateway, fake_vllm):
     assert "table_requires_review" in _codes(page)
 
 
-def test_textual_picture_in_supplement_is_recovered_with_text_prompt(gateway, fake_vllm):
+@pytest.mark.parametrize("truncated", [False, True])
+def test_textual_picture_in_supplement_is_recovered_with_text_prompt(gateway, fake_vllm, truncated):
     png = BytesIO()
     Image.fromarray(diagram()).save(png, format="PNG")
     with pymupdf.open() as doc:
@@ -322,7 +323,11 @@ def test_textual_picture_in_supplement_is_recovered_with_text_prompt(gateway, fa
         p.insert_image((50, 150, 350, 310), stream=png.getvalue())
         data = doc.tobytes()
     fake_vllm.answers[LAYOUT_PROMPT] = "[{'label': 'Picture', 'bbox': [0, 0, 1000, 1000]}]"
-    fake_vllm.answers[TEXT_PROMPT] = DIAGRAM["recovery_prediction"] + "\n"
+    def recognize(_image):
+        fake_vllm.finish_reason = "length" if truncated else "stop"
+        return DIAGRAM["recovery_prediction"] + "\n"
+
+    fake_vllm.answers[TEXT_PROMPT] = recognize
     (page,) = _post(gateway, data)
 
     assert _prompts(fake_vllm) == [LAYOUT_PROMPT, TEXT_PROMPT]
@@ -336,6 +341,8 @@ def test_textual_picture_in_supplement_is_recovered_with_text_prompt(gateway, fa
     request = page["prunedResult"]["routing"]["requests"][0]
     assert request["picture_text_blocks"] == 1
     assert "picture_text_recovery" in _codes(page)
+    assert ("ocr_truncated" in _codes(page)) == truncated
+    assert ("truncated" in request["issues"]) == truncated
 
 
 def test_full_page_ocr_does_not_recover_pictures(gateway, fake_vllm):
@@ -410,3 +417,107 @@ def test_other_modes_do_not_add_routing_fields(gateway, fake_vllm):
     assert "routing" not in page["prunedResult"]
     assert "page_router" not in page["prunedResult"]["model_settings"]
     assert all("block_source" not in b for b in _blocks(page))
+
+
+@pytest.fixture(params=[0, 1], ids=["pdf", "image"])
+def ocr_input(request):
+    """Visible synthetic content with no trustworthy text layer; always full OCR."""
+    if request.param == 0:
+        with pymupdf.open() as doc:
+            p = doc.new_page(width=300, height=300)
+            p.insert_text((20, 40), "Hidden broken text layer with enough characters", render_mode=3)
+            p.insert_text((20, 100), "Visible document content")
+            return doc.tobytes(), 0
+    return text_image_png(), 1
+
+
+@pytest.mark.parametrize("truncated", [False, True])
+def test_empty_ocr_output_requires_review(gateway, fake_vllm, ocr_input, truncated):
+    data, file_type = ocr_input
+    fake_vllm.finish_reason = "length" if truncated else "stop"
+    (page,) = _post(gateway, data, file_type)
+    routing = page["prunedResult"]["routing"]
+    assert _blocks(page) == []
+    assert routing["review"]
+    assert "ocr_empty_output" in _codes(page)
+    assert "empty_output" in routing["requests"][0]["issues"]
+    assert ("ocr_truncated" in _codes(page)) == truncated
+
+
+def test_empty_supplement_keeps_native_text_and_requires_review(gateway, fake_vllm):
+    with pymupdf.open() as doc:
+        p = doc.new_page(width=300, height=320)
+        p.insert_text((20, 40), "Native heading with enough valid characters")
+        p.insert_image((30, 100, 270, 230), stream=text_image_png())
+        data = doc.tobytes()
+    (page,) = _post(gateway, data)
+    routing = page["prunedResult"]["routing"]
+    assert routing["effective_mode"] == "native+ocr"
+    assert routing["review"]
+    assert {"supplemental_ocr", "ocr_empty_output"} <= set(_codes(page))
+    assert [b["block_content"] for b in _blocks(page)] == ["Native heading with enough valid characters"]
+    assert all(b["block_source"] == "native" for b in _blocks(page))
+    assert "empty_output" in routing["requests"][0]["issues"]
+
+
+@pytest.mark.parametrize("label", ["Picture", "Table"])
+def test_structural_ocr_blocks_propagate_prediction_review(gateway, fake_vllm, ocr_input, label):
+    """Source convert_records marks every block when any picture/table needs review."""
+    data, file_type = ocr_input
+    fake_vllm.answers[LAYOUT_PROMPT] = repr([
+        {"label": "Text", "bbox": [0, 0, 1000, 200]},
+        {"label": label, "bbox": [0, 200, 1000, 1000]},
+    ])
+    fake_vllm.answers[TEXT_PROMPT] = "Recognized heading"
+    fake_vllm.answers[TABLE_PROMPT] = "<fcel>Value<nl>"
+    (page,) = _post(gateway, data, file_type)
+    assert page["prunedResult"]["routing"]["review"]
+    assert all(b["block_review"] for b in _blocks(page))
+    code = "picture_requires_review" if label == "Picture" else "table_requires_review"
+    assert code in _codes(page)
+    assert _blocks(page)[0]["block_content"] == "Recognized heading"
+    assert _prompts(fake_vllm).count(TEXT_PROMPT) == 1  # no full-page picture recovery
+
+
+@pytest.mark.parametrize("label", ["Text", "Table"])
+def test_ocr_script_checks_apply_to_images_and_pdf(gateway, fake_vllm, ocr_input, label):
+    data, file_type = ocr_input
+    raw = "QUYẾT ĐỊNH СỘNG HÒА α"
+    fake_vllm.answers[LAYOUT_PROMPT] = repr([{"label": label, "bbox": [0, 0, 1000, 1000]}])
+    fake_vllm.answers[TEXT_PROMPT] = raw
+    fake_vllm.answers[TABLE_PROMPT] = f"<fcel>{raw}<nl>"
+    (page,) = _post(gateway, data, file_type)
+    assert page["prunedResult"]["routing"]["review"]
+    assert {"unexpected_script", "mixed_script_word"} <= set(_codes(page))
+    assert raw in _blocks(page)[0]["block_content"]  # flag, never repair predictions
+
+
+@pytest.mark.parametrize("stage", ["layout", "recognition"])
+def test_truncated_ocr_keeps_content_and_requires_review(gateway, fake_vllm, ocr_input, stage):
+    data, file_type = ocr_input
+
+    def layout(_image):
+        fake_vllm.finish_reason = "length" if stage == "layout" else "stop"
+        return "[{'label': 'Text', 'bbox': [0, 0, 1000, 1000]}]"
+
+    def recognize(_image):
+        fake_vllm.finish_reason = "length" if stage == "recognition" else "stop"
+        return "Partial transcription"
+
+    fake_vllm.answers[LAYOUT_PROMPT] = layout
+    fake_vllm.answers[TEXT_PROMPT] = recognize
+    (page,) = _post(gateway, data, file_type)
+    assert page["prunedResult"]["routing"]["review"]
+    assert "ocr_truncated" in _codes(page)
+    assert "truncated" in page["prunedResult"]["routing"]["requests"][0]["issues"]
+    assert [(b["block_content"], b["block_review"]) for b in _blocks(page)] == [
+        ("Partial transcription", True)]
+
+    # Quality evidence belongs to a request, not shared inference-client state.
+    fake_vllm.finish_reason = "stop"
+    fake_vllm.answers[LAYOUT_PROMPT] = "[{'label': 'Text', 'bbox': [0, 0, 1000, 1000]}]"
+    fake_vllm.answers[TEXT_PROMPT] = "Complete transcription"
+    (complete,) = _post(gateway, data, file_type)
+    assert not complete["prunedResult"]["routing"]["review"]
+    assert not _blocks(complete)[0]["block_review"]
+    assert _codes(complete) == []

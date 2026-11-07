@@ -2,11 +2,11 @@
 
 Ported from legal-vi-ocr `src/legal_vi_ocr/routing_review.py` at 6e7ad59 (`flag`, `picture`,
 `spatial_merge`, `annotate`). Adapted to the gateway's routed Khối (see `routed.py`) instead of
-canonical blocks; the rules are the same. Differences, all because the gateway fails the whole
-HTTP request when an inference call fails and has no recorded runs:
+canonical blocks; the rules are the same. Gateway adaptations:
 
-- no `ocr_pending` / `ocr_failed` flags: a page never completes with an OCR request missing;
-- no `ocr_truncated` flag: the inference client keeps output cut at max_tokens as is and only logs it;
+- no `ocr_pending` / `ocr_failed` flags: a failed inference fails the whole HTTP request;
+- truncation and empty predictions carry request-local issues instead of canonical page quality;
+- pictures explicitly carry `picture_requires_review` as well as their engine review flag;
 - `spatial_merge` takes the page rotation directly, so retained pictures on rotated pages anchor
   correctly even without OCR requests;
 - `spatial_merge` leaves a page without native Khối as it is: full-page OCR keeps Monkey's
@@ -82,6 +82,9 @@ def annotate(page):
         name = request["id"]
         if request["region"] is not None:
             flag(routing, "supplemental_ocr", request=name)
+        for issue, code in (("empty_output", "ocr_empty_output"), ("truncated", "ocr_truncated")):
+            if issue in request.get("issues", []):
+                flag(routing, code, request=name)
         if "empty_picture_text_recovery" in request.get("issues", []):
             flag(routing, "empty_picture_text_recovery", request=name)
         if request.get("dropped_spatial_duplicates"):
@@ -101,6 +104,8 @@ def annotate(page):
                 flag(routing, "native_table_fallback", **{"table": note})
         if block["label"] == "Table":
             flag(routing, "table_requires_review", block=i)
+        if block["label"] == "Picture":
+            flag(routing, "picture_requires_review", block=i)
         if block["review"]:
             flag(routing, "block_requires_review", block=i)
         # Inspect plain text (table cells included), without modifying it. Greek and
