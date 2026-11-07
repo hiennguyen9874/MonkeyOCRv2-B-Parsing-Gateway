@@ -54,7 +54,9 @@ class Settings:
             if value <= 0:
                 raise ValueError(f"{name} must be positive")
         if self.http_max_retries < 0 or self.retry_repeat_max_retries < 0:
-            raise ValueError("MOCR2_HTTP_MAX_RETRIES and MOCR2_REC_MAX_RETRIES must not be negative")
+            raise ValueError(
+                "MOCR2_HTTP_MAX_RETRIES and MOCR2_REC_MAX_RETRIES must not be negative"
+            )
 
     @classmethod
     def from_env(cls) -> Settings:

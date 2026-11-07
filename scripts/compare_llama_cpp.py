@@ -2,16 +2,15 @@
 
 import argparse
 import base64
-from collections import Counter
 import difflib
 import hashlib
 import json
-from pathlib import Path
 import shlex
 import sys
+from collections import Counter
+from pathlib import Path
 
 import httpx
-
 
 MODES = ("two-stage", "end-to-end")
 
@@ -22,18 +21,23 @@ def cer(reference, candidate):
     for i, ref_char in enumerate(reference, 1):
         current = [i]
         for j, char in enumerate(candidate, 1):
-            current.append(min(current[-1] + 1, previous[j] + 1,
-                               previous[j - 1] + (ref_char != char)))
+            current.append(
+                min(current[-1] + 1, previous[j] + 1, previous[j - 1] + (ref_char != char))
+            )
         previous = current
     distance = previous[-1]
     return distance, distance / len(reference) if reference else None
 
 
 def diff(reference, candidate, name):
-    lines = list(difflib.unified_diff(
-        reference.splitlines(keepends=True), candidate.splitlines(keepends=True),
-        fromfile=f"vllm/{name}", tofile=f"llama-cpp/{name}",
-    ))
+    lines = list(
+        difflib.unified_diff(
+            reference.splitlines(keepends=True),
+            candidate.splitlines(keepends=True),
+            fromfile=f"vllm/{name}",
+            tofile=f"llama-cpp/{name}",
+        )
+    )
     if not lines:
         return "(no differences)\n"
     return "".join(line if line.endswith("\n") else line + "\n" for line in lines)
@@ -60,21 +64,28 @@ def compare(reference, candidate):
     candidate_labels = Counter(block["label"] for block in candidate_blocks)
     lines = [
         f"Markdown CER: {rate:.6f} ({distance} edits / {len(ref_md)} reference characters)"
-        if rate is not None else
-        f"Markdown CER: undefined (empty reference; {distance} insertions)",
+        if rate is not None
+        else f"Markdown CER: undefined (empty reference; {distance} insertions)",
         f"Blocks: vLLM={len(ref_blocks)}, llama-cpp={len(candidate_blocks)}, "
         f"delta={len(candidate_blocks) - len(ref_blocks):+d}",
         "Labels (vLLM -> llama-cpp, delta):",
     ]
     for label in sorted(ref_labels.keys() | candidate_labels.keys()):
-        lines.append(f"  {label}: {ref_labels[label]} -> {candidate_labels[label]} "
-                     f"({candidate_labels[label] - ref_labels[label]:+d})")
-    lines.extend([
-        "\nMarkdown diff:\n" + diff(ref_md, candidate_md, "markdown"),
-        "Block label/content diff (reading order):\n" + diff(
-            json.dumps(ref_blocks, ensure_ascii=False, indent=2) + "\n",
-            json.dumps(candidate_blocks, ensure_ascii=False, indent=2) + "\n", "blocks"),
-    ])
+        lines.append(
+            f"  {label}: {ref_labels[label]} -> {candidate_labels[label]} "
+            f"({candidate_labels[label] - ref_labels[label]:+d})"
+        )
+    lines.extend(
+        [
+            "\nMarkdown diff:\n" + diff(ref_md, candidate_md, "markdown"),
+            "Block label/content diff (reading order):\n"
+            + diff(
+                json.dumps(ref_blocks, ensure_ascii=False, indent=2) + "\n",
+                json.dumps(candidate_blocks, ensure_ascii=False, indent=2) + "\n",
+                "blocks",
+            ),
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -91,20 +102,31 @@ def main():
     args.output.mkdir(parents=True, exist_ok=False)
     command = shlex.join(["uv", "run", "--no-sync", "python", *sys.argv])
     (args.output / "reproduce.sh").write_text(f"#!/bin/sh\n{command}\n", encoding="utf-8")
-    report = ["# vLLM vs llama-cpp manual comparison\n",
-              "CER uses vLLM Markdown as reference; no pass/fail threshold is applied.\n",
-              "Inputs must be public or synthetic; do not use legal-vi-ocr output.\n"]
+    report = [
+        "# vLLM vs llama-cpp manual comparison\n",
+        "CER uses vLLM Markdown as reference; no pass/fail threshold is applied.\n",
+        "Inputs must be public or synthetic; do not use legal-vi-ocr output.\n",
+    ]
     with httpx.Client(timeout=args.timeout, follow_redirects=False) as client:
         for index, (path, data) in enumerate(inputs, 1):
             encoded = base64.b64encode(data).decode("ascii")
             report.append(f"## {index}. {path}\n\nSHA-256: `{hashlib.sha256(data).hexdigest()}`\n")
             for mode in MODES:
                 responses = []
-                for backend, url in (("vllm", args.vllm_gateway), ("llama-cpp", args.llama_gateway)):
-                    response = client.post(url.rstrip("/") + "/layout-parsing", json={
-                        "file": encoded, "fileType": 1, "visualize": False,
-                        "returnMarkdownImages": False, "vlmExtraArgs": {"parsingMode": mode},
-                    })
+                for backend, url in (
+                    ("vllm", args.vllm_gateway),
+                    ("llama-cpp", args.llama_gateway),
+                ):
+                    response = client.post(
+                        url.rstrip("/") + "/layout-parsing",
+                        json={
+                            "file": encoded,
+                            "fileType": 1,
+                            "visualize": False,
+                            "returnMarkdownImages": False,
+                            "vlmExtraArgs": {"parsingMode": mode},
+                        },
+                    )
                     destination = args.output / f"{index:02d}-{mode}-{backend}.json"
                     destination.write_bytes(response.content)
                     response.raise_for_status()

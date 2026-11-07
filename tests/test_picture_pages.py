@@ -6,11 +6,11 @@ import weakref
 from io import BytesIO
 
 import pytest
+from conftest import END2END_PROMPT, LAYOUT_PROMPT
+from fake_vllm import FakeVLLM
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from conftest import END2END_PROMPT, LAYOUT_PROMPT
-from fake_vllm import FakeVLLM
 from monkeyocr_gateway.app import create_app
 
 

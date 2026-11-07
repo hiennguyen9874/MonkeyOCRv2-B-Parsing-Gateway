@@ -11,17 +11,16 @@ import json
 from io import BytesIO
 
 import pytest
-from PIL import Image, ImageDraw
-
 from conftest import (
     END2END_PROMPT,
     FORMULA_PROMPT,
+    image_base64,
     LAYOUT_PROMPT,
     TABLE_PROMPT,
     TEXT_PROMPT,
-    image_base64,
 )
 from fake_vllm import FakeVLLM
+from PIL import Image, ImageDraw
 
 # 1000 x 1000 pixels, so 0-1000 model coordinates are page pixels.
 PAGE_SIZE = (1000, 1000)

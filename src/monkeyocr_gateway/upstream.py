@@ -70,7 +70,7 @@ def _extract_balanced_blocks(text: str, left: str, right: str):
         elif char == right and depth > 0:
             depth -= 1
             if depth == 0 and start != -1:
-                blocks.append(text[start:index + 1])
+                blocks.append(text[start : index + 1])
                 start = -1
     return blocks
 
@@ -108,11 +108,7 @@ def _extract_tolerant_dict_blocks(text: str):
                 if depth == 0:
                     end = cursor + 1
                     break
-        blocks.append(
-            text[index:end]
-            if end is not None
-            else text[index:] + ("}" * max(depth, 1))
-        )
+        blocks.append(text[index:end] if end is not None else text[index:] + ("}" * max(depth, 1)))
     return _deduplicate_strings(blocks)
 
 
@@ -198,10 +194,13 @@ def parse_layout_output(text: str, image_size: tuple[int, int]) -> list[dict]:
         text,
         lambda item: _normalize_model_item(item, include_content=False),
     )
-    return [{
-        "bbox": _map_bbox_to_image(item["bbox"], width, height),
-        "label": item["label"],
-    } for item in items]
+    return [
+        {
+            "bbox": _map_bbox_to_image(item["bbox"], width, height),
+            "label": item["label"],
+        }
+        for item in items
+    ]
 
 
 def _build_page_tasks(page_idx, image, layouts, doc_id=None):
@@ -243,12 +242,14 @@ def parse_end2end_output(text: str, image_size: tuple[int, int]) -> tuple[list[d
     for block_idx, item in enumerate(items):
         bbox = _map_bbox_to_image(item["bbox"], width, height)
         label = item["label"]
-        records.append({
-            "bbox": bbox,
-            "label": label,
-            "content": (item.get("content") or "").strip(),
-            "_block_idx": block_idx,
-        })
+        records.append(
+            {
+                "bbox": bbox,
+                "label": label,
+                "content": (item.get("content") or "").strip(),
+                "_block_idx": block_idx,
+            }
+        )
         layouts.append({"bbox": bbox, "label": label})
     return records, layouts
 
@@ -257,207 +258,193 @@ def otsl_to_html(otsl_str):
     """core_runner.otsl_to_html"""
     if not otsl_str or not otsl_str.strip():
         return "<table></table>"
-    if re.search(r'<otsl>', otsl_str, flags=re.I):
+    if re.search(r"<otsl>", otsl_str, flags=re.I):
         return re.sub(
-            r'<otsl>(.*?)</otsl>',
+            r"<otsl>(.*?)</otsl>",
             lambda match: otsl_to_html(match.group(1)),
             otsl_str,
             flags=re.I | re.S,
         )
-    
+
     rows_tokens = otsl_str.split("<nl>")
     if rows_tokens and rows_tokens[-1] == "":
         rows_tokens.pop()
-    
+
     grid = []
-    
+
     for r_idx, row_str in enumerate(rows_tokens):
         if not row_str.strip():
             if r_idx >= len(grid):
                 grid.append([])
             continue
-        
+
         # Only OTSL control tags are tokens. Other markup (e.g. <br> or a
         # nested <table>) is cell content and must remain untouched.
         parts = re.findall(
-            r'<(fcel|ecel|lcel|ucel|xcel|nl)>(.*?)(?=<(?:fcel|ecel|lcel|ucel|xcel|nl)>|\Z)',
-            row_str, flags=re.DOTALL | re.IGNORECASE,
+            r"<(fcel|ecel|lcel|ucel|xcel|nl)>(.*?)(?=<(?:fcel|ecel|lcel|ucel|xcel|nl)>|\Z)",
+            row_str,
+            flags=re.DOTALL | re.IGNORECASE,
         )
-        
+
         if r_idx >= len(grid):
             grid.append([])
-        
+
         col_idx = 0
-        
+
         for tag, content in parts:
             while True:
                 while len(grid[r_idx]) <= col_idx:
                     grid[r_idx].append(None)
-                
+
                 if grid[r_idx][col_idx] is not None:
                     col_idx += 1
                 else:
                     break
-            
-            if tag == 'fcel' or tag == 'ecel':
+
+            if tag == "fcel" or tag == "ecel":
                 # Do not normalize whitespace. Decode the private OTSL escape
                 # used by html2otsl for literal control-looking tags.
                 text = content.replace("\ue100\ue100", "\ue100")
                 text = re.sub(r"\ue100(fcel|ecel|lcel|ucel|xcel|nl)>", r"<\1>", text, flags=re.I)
-                if tag == 'ecel':
+                if tag == "ecel":
                     text = ""
-                grid[r_idx][col_idx] = {
-                    'text': text,
-                    'rowspan': 1,
-                    'colspan': 1,
-                    'valid': True
-                }
+                grid[r_idx][col_idx] = {"text": text, "rowspan": 1, "colspan": 1, "valid": True}
                 col_idx += 1
-                
-            elif tag == 'lcel':
+
+            elif tag == "lcel":
                 search_c = col_idx - 1
                 found = False
                 while search_c >= 0:
                     if len(grid[r_idx]) > search_c:
                         cell = grid[r_idx][search_c]
-                        if cell and cell.get('valid'):
-                            cell['colspan'] += 1
+                        if cell and cell.get("valid"):
+                            cell["colspan"] += 1
                             found = True
                             break
                     search_c -= 1
-                
+
                 if found:
-                    grid[r_idx][col_idx] = {'valid': False, 'type': 'lcel'}
+                    grid[r_idx][col_idx] = {"valid": False, "type": "lcel"}
                 else:
-                    grid[r_idx][col_idx] = {
-                        'text': '',
-                        'rowspan': 1,
-                        'colspan': 1,
-                        'valid': True
-                    }
+                    grid[r_idx][col_idx] = {"text": "", "rowspan": 1, "colspan": 1, "valid": True}
                 col_idx += 1
-                
-            elif tag == 'ucel':
+
+            elif tag == "ucel":
                 search_r = r_idx - 1
                 found = False
                 while search_r >= 0:
                     if len(grid[search_r]) > col_idx:
                         cell = grid[search_r][col_idx]
-                        if cell and cell.get('valid'):
-                            cell['rowspan'] += 1
+                        if cell and cell.get("valid"):
+                            cell["rowspan"] += 1
                             found = True
                             break
                     search_r -= 1
-                
+
                 if found:
-                    grid[r_idx][col_idx] = {'valid': False, 'type': 'ucel'}
+                    grid[r_idx][col_idx] = {"valid": False, "type": "ucel"}
                 else:
-                    grid[r_idx][col_idx] = {
-                        'text': '',
-                        'rowspan': 1,
-                        'colspan': 1,
-                        'valid': True
-                    }
+                    grid[r_idx][col_idx] = {"text": "", "rowspan": 1, "colspan": 1, "valid": True}
                 col_idx += 1
-                
-            elif tag == 'xcel':
-                grid[r_idx][col_idx] = {'valid': False, 'type': 'xcel'}
+
+            elif tag == "xcel":
+                grid[r_idx][col_idx] = {"valid": False, "type": "xcel"}
                 col_idx += 1
             else:
                 col_idx += 1
-    
-    html_parts = ['<table>']
-    
+
+    html_parts = ["<table>"]
+
     for row in grid:
-        html_parts.append('<tr>')
+        html_parts.append("<tr>")
         for cell in row:
             if cell is None:
                 continue
-            elif cell.get('valid'):
+            elif cell.get("valid"):
                 attrs = []
-                if cell['rowspan'] > 1:
+                if cell["rowspan"] > 1:
                     attrs.append(f'rowspan="{cell["rowspan"]}"')
-                if cell['colspan'] > 1:
+                if cell["colspan"] > 1:
                     attrs.append(f'colspan="{cell["colspan"]}"')
-                
-                attr_str = ' ' + ' '.join(attrs) if attrs else ''
+
+                attr_str = " " + " ".join(attrs) if attrs else ""
                 # Cell content is already serialized HTML from html2otsl;
                 # preserve tags, entities and leading/trailing whitespace.
-                raw_text = cell['text'].replace('\r\n', '\n').replace('\r', '\n')
+                raw_text = cell["text"].replace("\r\n", "\n").replace("\r", "\n")
                 # Preserve embedded HTML tags/entities while escaping plain
                 # text, and represent OTSL text newlines as HTML line breaks.
-                chunks = re.split(r'(<[A-Za-z][^>]*>)', raw_text)
+                chunks = re.split(r"(<[A-Za-z][^>]*>)", raw_text)
                 rendered = []
                 for i, chunk in enumerate(chunks):
                     if i % 2:
-                        rendered.append('<br>' if re.fullmatch(r'<br\s*/?>', chunk, flags=re.I) else chunk)
+                        rendered.append(
+                            "<br>" if re.fullmatch(r"<br\s*/?>", chunk, flags=re.I) else chunk
+                        )
                     else:
-                        chunk = re.sub(r'&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);)', '&amp;', chunk)
-                        chunk = chunk.replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;').replace("'", '&#x27;')
-                        rendered.append(chunk.replace('\n', '<br>'))
-                text = ''.join(rendered)
-                html_parts.append(f'<td{attr_str}>{text}</td>')
-        html_parts.append('</tr>')
-    
-    html_parts.append('</table>')
-    return ''.join(html_parts)
+                        chunk = re.sub(
+                            r"&(?!(?:#\d+|#x[0-9a-fA-F]+|[A-Za-z][A-Za-z0-9]+);)", "&amp;", chunk
+                        )
+                        chunk = (
+                            chunk.replace("<", "&lt;")
+                            .replace(">", "&gt;")
+                            .replace('"', "&quot;")
+                            .replace("'", "&#x27;")
+                        )
+                        rendered.append(chunk.replace("\n", "<br>"))
+                text = "".join(rendered)
+                html_parts.append(f"<td{attr_str}>{text}</td>")
+        html_parts.append("</tr>")
+
+    html_parts.append("</table>")
+    return "".join(html_parts)
 
 
 def process_formula(content: str):
     """core_runner.process_formula: returns (LaTeX, trailing equation number or None)."""
-    content = content.strip('$').strip()
+    content = content.strip("$").strip()
     # Collapse repeated \quad sequences (>=5).
-    content = re.sub(
-        r'(?:\\quad\s*){5,}',
-        r'\\quad ',
-        content
-    )
+    content = re.sub(r"(?:\\quad\s*){5,}", r"\\quad ", content)
 
     # Collapse repeated \qquad sequences (>=5).
-    content = re.sub(
-        r'(?:\\qquad\s*){5,}',
-        r'\\qquad ',
-        content
-    ).strip()
+    content = re.sub(r"(?:\\qquad\s*){5,}", r"\\qquad ", content).strip()
 
     # Extract trailing (xxx). TODO: remove tag{}.
     match = re.search(
-        r'(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$'
-        r'|\\tag\{([^{}]*)\}\s*$',
-        content
+        r"(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$"
+        r"|\\tag\{([^{}]*)\}\s*$",
+        content,
     )
 
     extracted = None
     if match:
         extracted = match.group(1)
-        content = content[:match.start()].rstrip()
+        content = content[: match.start()].rstrip()
 
     begin_env = None
     # Detect leading \begin{xx}.
-    begin_match = re.match(r'^\\begin\{([^\}]+)\}', content)
+    begin_match = re.match(r"^\\begin\{([^\}]+)\}", content)
     if begin_match:
         begin_env = begin_match.group(1)
         # Remove leading \begin{xx}.
-        content = content[begin_match.end():].lstrip()
+        content = content[begin_match.end() :].lstrip()
 
         # Detect whether the matching \end{xx} is at the end.
-        end_pattern = rf'\\end\{{{re.escape(begin_env)}\}}\s*$'
+        end_pattern = rf"\\end\{{{re.escape(begin_env)}\}}\s*$"
         end_match = re.search(end_pattern, content)
         if end_match:
             # Remove trailing \end{xx}.
-            content = content[:end_match.start()].rstrip()
-
+            content = content[: end_match.start()].rstrip()
 
     # Extract trailing (xxx).
     match = re.search(
-        r'(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$'
-        r'|\\tag\{([^{}]*)\}\s*$',
-        content
+        r"(?:\\quad|\\qquad|\\eqno)\s*\(([^()]*)\)\s*$"
+        r"|\\tag\{([^{}]*)\}\s*$",
+        content,
     )
 
     if match:
         extracted = match.group(1)
-        content = content[:match.start()].rstrip()
+        content = content[: match.start()].rstrip()
 
     # ===== Restore begin/end =====
 
@@ -492,9 +479,7 @@ def detect_repeat_token(
 
 def _should_retry_repeat_output(raw: str) -> bool:
     raw = raw or ""
-    return detect_repeat_token(raw) or (
-        len(raw) > 50 and detect_repeat_token(raw, cut_from_end=50)
-    )
+    return detect_repeat_token(raw) or (len(raw) > 50 and detect_repeat_token(raw, cut_from_end=50))
 
 
 def repeat_retry_sampling(retry: int) -> tuple[float, float]:
@@ -511,7 +496,9 @@ def _apply_jpeg_orientation(img: Image.Image) -> Image.Image:
     return img
 
 
-def load_image(image: Image.Image, max_pixels: int | None = None, min_pixels: int | None = None) -> Image.Image:
+def load_image(
+    image: Image.Image, max_pixels: int | None = None, min_pixels: int | None = None
+) -> Image.Image:
     """core_runner.load_image, restricted to the PIL-image branch and the
     max_pixels/min_pixels arguments that MonkeyOCRv2_ServerParsing.batch_inference uses.
     """

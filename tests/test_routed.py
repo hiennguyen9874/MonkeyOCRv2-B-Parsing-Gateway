@@ -12,16 +12,16 @@ from io import BytesIO
 import numpy as np
 import pymupdf
 import pytest
+from conftest import FORMULA_PROMPT, image_base64, LAYOUT_PROMPT, TABLE_PROMPT, TEXT_PROMPT
+from fake_vllm import FakeVLLM, request_image, request_prompt
 from fastapi.testclient import TestClient
 from PIL import Image
+from router_pdfs import DIAGRAM, diagram, table_pdf, text_image_png
 
-from conftest import FORMULA_PROMPT, LAYOUT_PROMPT, TABLE_PROMPT, TEXT_PROMPT, image_base64
-from fake_vllm import FakeVLLM, request_image, request_prompt
 from monkeyocr_gateway.app import create_app
 from monkeyocr_gateway.document_loader import PdfDocument
 from monkeyocr_gateway.routed import NativeDocument
 from monkeyocr_gateway.router.gate import assess
-from router_pdfs import DIAGRAM, diagram, table_pdf, text_image_png
 
 
 @pytest.fixture

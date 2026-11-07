@@ -22,7 +22,9 @@ def background(lum, block=BLOCK, *, percentile=90):
     h, w = lum.shape
     bh, bw = max(1, h // block), max(1, w // block)
     th, tw = h // bh, w // bw
-    tiles = lum[:bh * th, :bw * tw].reshape(bh, th, bw, tw).transpose(0, 2, 1, 3).reshape(bh, bw, -1)
+    tiles = (
+        lum[: bh * th, : bw * tw].reshape(bh, th, bw, tw).transpose(0, 2, 1, 3).reshape(bh, bw, -1)
+    )
     grid = np.percentile(tiles, percentile, axis=2)
     full = np.repeat(np.repeat(grid, th, 0), tw, 1)
     full = np.pad(full, ((0, h - full.shape[0]), (0, w - full.shape[1])), mode="edge")

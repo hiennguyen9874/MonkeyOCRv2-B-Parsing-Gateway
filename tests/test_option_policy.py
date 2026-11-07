@@ -12,14 +12,13 @@ import re
 from urllib.parse import unquote
 
 import pytest
+from conftest import END2END_PROMPT, image_base64, LAYOUT_PROMPT, TEXT_PROMPT
+from fake_vllm import request_image, request_prompt
 from fastapi.testclient import TestClient
 from pydantic import BaseModel, ConfigDict, Field
+from test_paddle_format import _painted_page, fake_vllm  # noqa: F401 - fixture
 
 from monkeyocr_gateway.app import create_app
-
-from conftest import END2END_PROMPT, LAYOUT_PROMPT, TEXT_PROMPT, image_base64
-from fake_vllm import request_image, request_prompt
-from test_paddle_format import _painted_page, fake_vllm  # noqa: F401 - fixture
 
 WEKNORA_PARAMS = {
     "markdownIgnoreLabels": [

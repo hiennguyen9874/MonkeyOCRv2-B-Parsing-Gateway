@@ -18,8 +18,8 @@ def main():
     os.environ["TRANSFORMERS_OFFLINE"] = "1"
     os.environ["PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK"] = "True"
 
-    from PIL import Image, ImageDraw, ImageFont
     from paddleocr import PaddleOCRVL
+    from PIL import Image, ImageDraw, ImageFont
 
     args.output.mkdir(parents=True, exist_ok=False)
     image = Image.new("RGB", (1600, 2000), "white")
@@ -35,7 +35,12 @@ def main():
     draw.text((560, 650), "E = mc²", font=math, fill="black")
     draw.text((1360, 675), "(1)", font=body, fill="black")
     draw.text((140, 950), "1.1 Explanation", font=heading, fill="black")
-    draw.text((140, 1060), "Energy equals mass times the square of the speed of light.", font=body, fill="black")
+    draw.text(
+        (140, 1060),
+        "Energy equals mass times the square of the speed of light.",
+        font=body,
+        fill="black",
+    )
     if args.picture:
         draw.rectangle((300, 1250, 1300, 1800), fill="#75bfff")
         draw.ellipse((1050, 1300, 1200, 1450), fill="#ffda42")
@@ -71,8 +76,10 @@ def main():
             destination = args.output / path
             destination.parent.mkdir(parents=True, exist_ok=True)
             crop.save(destination)
-    versions = {name: importlib.metadata.version(name) for name in
-                ("paddleocr", "paddlex", "transformers", "torch", "pillow")}
+    versions = {
+        name: importlib.metadata.version(name)
+        for name in ("paddleocr", "paddlex", "transformers", "torch", "pillow")
+    }
     (args.output / "versions.json").write_text(
         json.dumps(versions, indent=2) + "\n", encoding="utf-8"
     )

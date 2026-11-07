@@ -18,13 +18,16 @@ def profile_page(page, name, number):
     valid = sum(ch.lower() in VIETNAMESE for ch in normalized)
     invalid = sum(ch in MARKS for ch in normalized)
     count = sum(not ch.isspace() for ch in raw)
-    images = [list(map(lambda n: round(n, 2), image["bbox"]))
-              for image in page.get_image_info()]
+    images = [list(map(lambda n: round(n, 2), image["bbox"])) for image in page.get_image_info()]
     return {
-        "file": name, "page": number, "page_type": "native" if count else "scan",
+        "file": name,
+        "page": number,
+        "page_type": "native" if count else "scan",
         "character_count": count,
         "valid_vietnamese_diacritic_ratio": valid / (valid + invalid) if valid + invalid else None,
         "invalid_diacritic_marks": invalid,
-        "bad_glyph_count": sum(ch == "\ufffd" or (unicodedata.category(ch) == "Cc" and not ch.isspace()) for ch in raw),
+        "bad_glyph_count": sum(
+            ch == "\ufffd" or (unicodedata.category(ch) == "Cc" and not ch.isspace()) for ch in raw
+        ),
         "image_regions": images,
     }

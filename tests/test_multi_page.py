@@ -8,11 +8,11 @@ import time
 from io import BytesIO
 
 import pytest
+from conftest import END2END_PROMPT, image_base64
+from fake_vllm import FakeVLLM, request_image
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from conftest import END2END_PROMPT, image_base64
-from fake_vllm import FakeVLLM, request_image
 from monkeyocr_gateway.app import create_app
 
 # Each page is one solid colour so the fake model can tell which page it received.

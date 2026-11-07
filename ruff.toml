@@ -79,6 +79,14 @@ docstring-code-line-length = "dynamic"
 "*/settings/*" = ["F403", "F405"]
 "*/__init__.py" = ["F403", "F401"]
 "triton/*" = ["B905"]
+# Preserve the pinned upstream ports for review and parity testing.
+"src/monkeyocr_gateway/router/canonical.py" = ["C901"]
+"src/monkeyocr_gateway/router/gate.py" = ["B007", "B008", "B905"]
+"src/monkeyocr_gateway/router/insertions.py" = ["B007", "E741"]
+"src/monkeyocr_gateway/router/native_tables.py" = ["E741"]
+"src/monkeyocr_gateway/router/profiler.py" = ["C417"]
+"src/monkeyocr_gateway/router/views.py" = ["E741"]
+"src/monkeyocr_gateway/upstream.py" = ["C901"]
 
 [lint.mccabe]
 # Flag errors (`C901`) above 25: request/event validators are deliberately flat if-chains

@@ -5,9 +5,8 @@ from __future__ import annotations
 import base64
 from io import BytesIO
 
-from PIL import Image
-
 from conftest import END2END_PROMPT, image_base64
+from PIL import Image
 
 # A4 at 150 DPI: larger than the 1,003,520-pixel request limit, so the image
 # sent to vLLM is downscaled while bboxes stay in the original page space.

@@ -113,9 +113,13 @@ def _decode_base64(file: str) -> bytes:
 
 def _check_url(url: httpx.URL, allowlist: tuple[str, ...]) -> None:
     if url.scheme not in ("http", "https"):
-        raise DocumentError(422, f"file URL scheme {url.scheme!r} is not supported; use http or https")
+        raise DocumentError(
+            422, f"file URL scheme {url.scheme!r} is not supported; use http or https"
+        )
     if not allowlist:
-        raise DocumentError(422, "file URLs are not accepted: MOCR2_URL_ALLOWLIST is empty; send Base64")
+        raise DocumentError(
+            422, "file URLs are not accepted: MOCR2_URL_ALLOWLIST is empty; send Base64"
+        )
     if url.host.lower() not in allowlist:
         raise DocumentError(422, f"file URL host {url.host!r} is not in MOCR2_URL_ALLOWLIST")
 
@@ -144,7 +148,8 @@ async def _download(file: str, allowlist: tuple[str, ...], max_bytes: int, timeo
                         data += chunk
                         if max_bytes and len(data) > max_bytes:
                             raise DocumentError(
-                                413, f"file URL content exceeds {max_bytes} bytes (MOCR2_MAX_BODY_BYTES)"
+                                413,
+                                f"file URL content exceeds {max_bytes} bytes (MOCR2_MAX_BODY_BYTES)",
                             )
                     if not data:
                         raise DocumentError(422, "file URL returned no content")
@@ -155,16 +160,22 @@ async def _download(file: str, allowlist: tuple[str, ...], max_bytes: int, timeo
             504, f"Downloading the file URL took longer than {timeout}s (MOCR2_URL_FETCH_TIMEOUT)"
         ) from None
     except httpx.HTTPError as exc:
-        raise DocumentError(422, f"Downloading the file URL failed: {type(exc).__name__}: {exc}") from None
+        raise DocumentError(
+            422, f"Downloading the file URL failed: {type(exc).__name__}: {exc}"
+        ) from None
 
 
-def open_document(data: bytes, file_type: int | None, max_pages: int | None) -> PdfDocument | ImageDocument:
+def open_document(
+    data: bytes, file_type: int | None, max_pages: int | None
+) -> PdfDocument | ImageDocument:
     """Open the file bytes; fileType 0 is PDF, 1 is image, None detects by magic bytes.
 
     Raises DocumentError for input the gateway cannot accept.
     """
     if file_type not in (PDF_FILE_TYPE, IMAGE_FILE_TYPE, None):
-        raise DocumentError(422, f"Invalid fileType {file_type!r}; expected 0 (PDF), 1 (image) or null")
+        raise DocumentError(
+            422, f"Invalid fileType {file_type!r}; expected 0 (PDF), 1 (image) or null"
+        )
 
     detected = file_type is None
     if detected:
@@ -176,7 +187,9 @@ def open_document(data: bytes, file_type: int | None, max_pages: int | None) -> 
         if file_type == PDF_FILE_TYPE:
             message = f"file is not a readable PDF: {exc}"
         elif detected:
-            message = "Unrecognized file type; expected a PDF or an image (PNG, JPEG, BMP, WEBP, TIFF)"
+            message = (
+                "Unrecognized file type; expected a PDF or an image (PNG, JPEG, BMP, WEBP, TIFF)"
+            )
         else:
             message = f"file is not a readable image: {exc}"
         raise DocumentError(422, message) from None
@@ -184,6 +197,7 @@ def open_document(data: bytes, file_type: int | None, max_pages: int | None) -> 
     if max_pages and document.page_count > max_pages:
         document.close()
         raise DocumentError(
-            413, f"Document has {document.page_count} pages; the limit is {max_pages} (MOCR2_MAX_PAGES)"
+            413,
+            f"Document has {document.page_count} pages; the limit is {max_pages} (MOCR2_MAX_PAGES)",
         )
     return document

@@ -28,8 +28,15 @@ def flag(routing, code, **evidence):
 
 def picture(bbox, config=None):
     """A retained Picture Khối: kept for review, never recognized."""
-    return {"bbox": list(bbox), "label": "Picture", "content": "", "raw_text": "",
-            "source": "routing", "review": True, "config": dict(config or {})}
+    return {
+        "bbox": list(bbox),
+        "label": "Picture",
+        "content": "",
+        "raw_text": "",
+        "source": "routing",
+        "review": True,
+        "config": dict(config or {}),
+    }
 
 
 def is_addition(block):
@@ -88,13 +95,22 @@ def annotate(page):
         if "empty_picture_text_recovery" in request.get("issues", []):
             flag(routing, "empty_picture_text_recovery", request=name)
         if request.get("dropped_spatial_duplicates"):
-            flag(routing, "spatial_duplicates_dropped", request=name,
-                 count=request["dropped_spatial_duplicates"])
+            flag(
+                routing,
+                "spatial_duplicates_dropped",
+                request=name,
+                count=request["dropped_spatial_duplicates"],
+            )
     for i, block in enumerate(page["blocks"]):
         config = block["config"]
         if "picture_text_source" in config:
-            flag(routing, "picture_text_recovery", block=i, source=config["picture_text_source"],
-                 request=config.get("routed_request"))
+            flag(
+                routing,
+                "picture_text_recovery",
+                block=i,
+                source=config["picture_text_source"],
+                request=config.get("routed_request"),
+            )
         if "table_fallback" in config:
             # Record even benign rejections (e.g. a one-row prose box).
             note = config["table_fallback"]
@@ -131,8 +147,11 @@ def annotate(page):
         flag(routing, "engine_requires_review")
     # Very sparse dark ink can still be real faint text: flag, never delete it.
     signals = routing["signals"]
-    if ("text_ink_ratio" in signals
-            and signals["text_ink_ratio"] < routing["thresholds"]["near_blank_ink_ratio"]
-            and routing["decision"] == "ocr" and any(b["raw_text"].strip() for b in page["blocks"])):
+    if (
+        "text_ink_ratio" in signals
+        and signals["text_ink_ratio"] < routing["thresholds"]["near_blank_ink_ratio"]
+        and routing["decision"] == "ocr"
+        and any(b["raw_text"].strip() for b in page["blocks"])
+    ):
         flag(routing, "possible_low_ink_hallucination")
     page["review"] |= bool(routing["review_reasons"])

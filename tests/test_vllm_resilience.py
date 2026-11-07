@@ -10,11 +10,11 @@ import time
 
 import httpx
 import pytest
+from conftest import END2END_PROMPT, image_base64, LAYOUT_PROMPT, TEXT_PROMPT
+from fake_vllm import FakeVLLM, request_prompt
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from conftest import END2END_PROMPT, LAYOUT_PROMPT, TEXT_PROMPT, image_base64
-from fake_vllm import FakeVLLM, request_prompt
 from monkeyocr_gateway.app import create_app
 
 ENV = (

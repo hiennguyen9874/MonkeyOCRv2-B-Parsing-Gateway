@@ -5,9 +5,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
+from conftest import LAYOUT_PROMPT
 from PIL import Image
 
-from conftest import LAYOUT_PROMPT
 from monkeyocr_gateway.page_parser import parse_page
 from monkeyocr_gateway.vllm_client import GenerationOptions
 

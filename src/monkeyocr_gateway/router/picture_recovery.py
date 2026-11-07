@@ -34,12 +34,14 @@ def candidates(rgb, pictures, recognized, dpi):
             # Keep the original reviewed Picture. This narrowly scoped fallback
             # is not a replacement for primary all-size OCR or mark handling.
             continue
-        crop = rgb[rect.y0:rect.y1, rect.x0:rect.x1].copy()
+        crop = rgb[rect.y0 : rect.y1, rect.x0 : rect.x1].copy()
         for box in covered_boxes:
             covered = (pymupdf.Rect(box) & rect).irect
             if not covered.is_empty:
-                crop[covered.y0-rect.y0:covered.y1-rect.y0,
-                     covered.x0-rect.x0:covered.x1-rect.x0] = 255
+                crop[
+                    covered.y0 - rect.y0 : covered.y1 - rect.y0,
+                    covered.x0 - rect.x0 : covered.x1 - rect.x0,
+                ] = 255
         # Downsample analysis only; recognition uses the full-resolution crop.
         step = max(1, round(dpi / 100))
         analysis = crop[::step, ::step]
@@ -58,7 +60,9 @@ def candidates(rgb, pictures, recognized, dpi):
         # local median, as well as line structure, before inverting polarity.
         _, median = background(lum, block, percentile=50)
         dark_context = median < 160
-        light = text_mask(light_bg - (255 - lum) >= 16, analysis, dpi / step) & neutral & dark_context
+        light = (
+            text_mask(light_bg - (255 - lum) >= 16, analysis, dpi / step) & neutral & dark_context
+        )
         if has_text_lines(dark) or has_text_lines(light):
             result.append({"picture_block": picture_index, "bbox": list(rect), "image": crop})
             covered_boxes.append(rect)  # Nested/overlapping pictures must not repeat pixels.

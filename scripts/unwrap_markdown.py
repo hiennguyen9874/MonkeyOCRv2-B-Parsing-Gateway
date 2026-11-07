@@ -9,8 +9,8 @@ tables, HTML, reference definitions and code are left untouched.
 from __future__ import annotations
 
 import argparse
-from pathlib import Path
 import re
+from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PATHS = [ROOT / "docs/agents/voice-lab", ROOT / "docs/agents/worker"]
@@ -81,8 +81,16 @@ def unwrap(text: str) -> str:
             out.append(line)
             opaque = True
             continue
-        next_is_setext = index + 1 < len(lines) and re.fullmatch(r" {0,3}(?:=+|-+)\s*", lines[index + 1])
-        if SPECIAL.match(line) or RULE.fullmatch(line) or "|" in line or next_is_setext or "\t" in line[:indent + 1]:
+        next_is_setext = index + 1 < len(lines) and re.fullmatch(
+            r" {0,3}(?:=+|-+)\s*", lines[index + 1]
+        )
+        if (
+            SPECIAL.match(line)
+            or RULE.fullmatch(line)
+            or "|" in line
+            or next_is_setext
+            or "\t" in line[: indent + 1]
+        ):
             flush()
             out.append(line)
             list_indent = None
@@ -135,8 +143,15 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--write", action="store_true", help="rewrite files in place")
-    mode.add_argument("--check", action="store_true", help="check only (default); exit 1 if changes are needed")
-    parser.add_argument("paths", nargs="*", type=Path, help="Markdown files/directories; defaults to the two agent guide directories")
+    mode.add_argument(
+        "--check", action="store_true", help="check only (default); exit 1 if changes are needed"
+    )
+    parser.add_argument(
+        "paths",
+        nargs="*",
+        type=Path,
+        help="Markdown files/directories; defaults to the two agent guide directories",
+    )
     args = parser.parse_args()
     try:
         files = markdown_files(args.paths or DEFAULT_PATHS)
@@ -150,7 +165,9 @@ def main() -> int:
                 print(f"{'Fixed' if args.write else 'Would fix'}: {path}")
                 if args.write:
                     path.write_bytes(updated.encode("utf-8"))
-        print(f"{len(files)} Markdown files checked; {changed} {'fixed' if args.write else 'need fixing'}.")
+        print(
+            f"{len(files)} Markdown files checked; {changed} {'fixed' if args.write else 'need fixing'}."
+        )
         return int(changed > 0 and not args.write)
     except (OSError, UnicodeError, ValueError) as exc:
         parser.error(str(exc))

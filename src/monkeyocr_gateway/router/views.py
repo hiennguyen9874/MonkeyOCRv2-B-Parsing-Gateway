@@ -29,7 +29,9 @@ def table_html(table):
             if cell is None:
                 continue
             tag = "th" if cell["header"] else "td"
-            parts.append(f'<{tag} rowspan="{cell["rowspan"]}" colspan="{cell["colspan"]}">'
-                         f'{escape(cell_display(cell["text"]))}</{tag}>')
+            parts.append(
+                f'<{tag} rowspan="{cell["rowspan"]}" colspan="{cell["colspan"]}">'
+                f"{escape(cell_display(cell['text']))}</{tag}>"
+            )
         rows.append("<tr>" + "".join(parts) + "</tr>")
     return "<table>" + "".join(rows) + "</table>"

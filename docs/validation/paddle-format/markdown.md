@@ -4,7 +4,7 @@
 
 The mass-energy relation is shown below.
 
- $$  E=m c^{2} $$ 
+ $$  E=m c^{2} $$
 
 ### 1.1 Explanation
 

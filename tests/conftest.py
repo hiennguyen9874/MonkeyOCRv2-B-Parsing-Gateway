@@ -5,10 +5,10 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
+from fake_vllm import FakeVLLM
 from fastapi.testclient import TestClient
 from PIL import Image
 
-from fake_vllm import FakeVLLM
 from monkeyocr_gateway.app import create_app
 
 FIXTURES = Path(__file__).parent / "fixtures"

@@ -8,15 +8,15 @@ from dataclasses import replace
 from PIL import Image
 
 from .upstream import (
+    _build_page_tasks,
+    _should_retry_repeat_output,
     ALL_PROMPT,
     GATEWAY_EXTRA_PROMPTS,
     LAYOUT_MAX_TOKENS,
     LAYOUT_MIN_PIXELS,
-    RECOGNITION_MAX_TOKENS,
-    _build_page_tasks,
-    _should_retry_repeat_output,
     parse_end2end_output,
     parse_layout_output,
+    RECOGNITION_MAX_TOKENS,
     repeat_retry_sampling,
 )
 from .vllm_client import GenerationOptions, VLLMClient
@@ -92,7 +92,10 @@ async def _parse_end_to_end(
 
 
 async def _parse_two_stage(
-    image: Image.Image, vllm: VLLMClient, options: GenerationOptions, repeat_retries: int,
+    image: Image.Image,
+    vllm: VLLMClient,
+    options: GenerationOptions,
+    repeat_retries: int,
     issues: list[str] | None = None,
 ) -> list[dict]:
     """Chế độ hai giai đoạn, as Upstream's ServicePipelinePool._parse_page does it:
@@ -119,12 +122,17 @@ async def _parse_two_stage(
         if not task["need_infer"]:
             return ""
         return await _chat_with_repeat_retry(
-            vllm, task["image"], task["question"], options, repeat_retries, RECOGNITION_MAX_TOKENS,
+            vllm,
+            task["image"],
+            task["question"],
+            options,
+            repeat_retries,
+            RECOGNITION_MAX_TOKENS,
             issues=issues,
         )
 
     raws = await gather_or_cancel([recognize(task) for task in tasks])
     return [
         {"bbox": task["bbox"], "label": task["label"], "content": (raw or "").strip()}
-        for task, raw in zip(tasks, raws)
+        for task, raw in zip(tasks, raws, strict=True)
     ]

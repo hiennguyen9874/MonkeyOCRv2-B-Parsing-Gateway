@@ -18,7 +18,10 @@ vllm-cu126 = ["vllm==0.11.2", "torch", "torchvision", "torchaudio"]
 vllm-cu128 = ["vllm==0.11.2", "torch", "torchvision", "torchaudio"]
 
 [dependency-groups]
-dev = ["pytest"]
+dev = [
+    "pre-commit>=4.7.0",
+    "pytest",
+]
 
 [tool.uv]
 conflicts = [[{ extra = "vllm-cu126" }, { extra = "vllm-cu128" }]]

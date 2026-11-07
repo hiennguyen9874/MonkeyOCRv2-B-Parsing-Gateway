@@ -21,15 +21,14 @@ import pypdfium2 as pdfium
 import pytest
 from PIL import Image, ImageDraw
 
-from monkeyocr_gateway.document_loader import PDFIUM_LOCK, PdfDocument
-
+from monkeyocr_gateway.document_loader import PdfDocument, PDFIUM_LOCK
 from monkeyocr_gateway.upstream import (
-    ALL_PROMPT,
-    GATEWAY_EXTRA_PROMPTS,
     _build_page_tasks,
     _map_bbox_to_image,
     _should_retry_repeat_output,
+    ALL_PROMPT,
     detect_repeat_token,
+    GATEWAY_EXTRA_PROMPTS,
     load_image,
     otsl_to_html,
     parse_end2end_output,

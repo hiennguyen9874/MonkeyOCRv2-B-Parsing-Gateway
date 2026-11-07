@@ -34,13 +34,14 @@ import numpy as np
 import pymupdf
 from PIL import Image
 
-from .document_loader import PDF_RENDER_SCALE, DocumentError
+from .document_loader import DocumentError, PDF_RENDER_SCALE
 from .page_parser import _chat_with_repeat_retry, gather_or_cancel, parse_page
 from .router import SOURCE_REVISION
-from .router.gate import GateConfig, assess, pixel_box, word_boxes
+from .router.gate import assess, GateConfig, pixel_box, word_boxes
 from .router.native import PyMuPDFAdapter
 from .router.native_tables import PyMuPDFTablesAdapter
-from .router.picture_recovery import POLICY as PICTURE_RECOVERY_POLICY, candidates as picture_candidates
+from .router.picture_recovery import candidates as picture_candidates
+from .router.picture_recovery import POLICY as PICTURE_RECOVERY_POLICY
 from .router.review import annotate, flag, picture, spatial_merge
 from .router.views import table_html
 from .upstream import ALL_PROMPT, RECOGNITION_MAX_TOKENS
@@ -93,15 +94,28 @@ class NativeDocument:
 
 def native_block(block: dict) -> dict:
     """Canonical native block (text or table) -> routed Khối with a Nhãn Monkey."""
-    config = {key: block["provenance"]["config"][key]
-              for key in ("table_fallback", "table_postprocess") if key in block["provenance"]["config"]}
-    routed = {"bbox": list(block["bbox"]), "label": "Text", "content": block["raw_text"],
-              "raw_text": block["raw_text"], "source": "native",
-              "review": block["quality"]["review"], "config": config}
+    config = {
+        key: block["provenance"]["config"][key]
+        for key in ("table_fallback", "table_postprocess")
+        if key in block["provenance"]["config"]
+    }
+    routed = {
+        "bbox": list(block["bbox"]),
+        "label": "Text",
+        "content": block["raw_text"],
+        "raw_text": block["raw_text"],
+        "source": "native",
+        "review": block["quality"]["review"],
+        "config": config,
+    }
     if block["type"] == "table":
         # Cell texts for review checks; HTML for the Paddle table Khối.
-        routed.update(label="Table", content=table_html(block["table"]), format="html",
-                      raw_text=" ".join(c["text"] for c in block["table"]["cells"]))
+        routed.update(
+            label="Table",
+            content=table_html(block["table"]),
+            format="html",
+            raw_text=" ".join(c["text"] for c in block["table"]["cells"]),
+        )
     return routed
 
 
@@ -154,7 +168,9 @@ def plan_page(pdf_page, file: dict, number: int) -> dict:
     return {"routing": routing, "blocks": blocks, "review": review, "regions": regions, **geometry}
 
 
-def prepare_request(image: Image.Image, plan: dict, index: int, region) -> tuple[dict, Image.Image | None]:
+def prepare_request(
+    image: Image.Image, plan: dict, index: int, region
+) -> tuple[dict, Image.Image | None]:
     """The OCR input of one request and the mapping of its points back to the source.
 
     Full-page requests send the rendered page unchanged. Supplements crop the region,
@@ -171,10 +187,19 @@ def prepare_request(image: Image.Image, plan: dict, index: int, region) -> tuple
     else:
         box = pixel_box(region, rotation, width, height, rect)
     x0, y0, x1, y1 = box
-    visual = pymupdf.Rect(x0 * rect.width / width, y0 * rect.height / height,
-                          x1 * rect.width / width, y1 * rect.height / height)
-    request = {"id": f"request-{index:04d}", "region": region, "masked_native_words": masked,
-               "padding_pixels": 0, "image_size": [x1 - x0, y1 - y0]}
+    visual = pymupdf.Rect(
+        x0 * rect.width / width,
+        y0 * rect.height / height,
+        x1 * rect.width / width,
+        y1 * rect.height / height,
+    )
+    request = {
+        "id": f"request-{index:04d}",
+        "region": region,
+        "masked_native_words": masked,
+        "padding_pixels": 0,
+        "image_size": [x1 - x0, y1 - y0],
+    }
     if x1 <= x0 or y1 <= y0:
         request["visual_bbox"] = list(visual)
         return request, None
@@ -183,13 +208,17 @@ def prepare_request(image: Image.Image, plan: dict, index: int, region) -> tuple
     else:
         crop = np.asarray(image)[y0:y1, x0:x1].copy()
         for word in plan["word_boxes"]:
-            a, b, c, d = pixel_box(pymupdf.Rect(word) + (-1, -1, 1, 1), rotation, width, height, rect)
+            a, b, c, d = pixel_box(
+                pymupdf.Rect(word) + (-1, -1, 1, 1), rotation, width, height, rect
+            )
             a, b, c, d = max(a, x0), max(b, y0), min(c, x1), min(d, y1)
             if a < c and b < d:
-                crop[b - y0:d - y0, a - x0:c - x0] = 255
+                crop[b - y0 : d - y0, a - x0 : c - x0] = 255
         if pymupdf.Rect(region).get_area() < GATE_CONFIG.min_image_area_ratio * rect.get_area():
             padding = max(1, round(GATE_CONFIG.small_crop_padding_pt * RENDER_DPI / 72))
-            crop = np.pad(crop, ((padding, padding), (padding, padding), (0, 0)), constant_values=255)
+            crop = np.pad(
+                crop, ((padding, padding), (padding, padding), (0, 0)), constant_values=255
+            )
             px, py = padding * rect.width / width, padding * rect.height / height
             visual += (-px, -py, px, py)
             request["padding_pixels"] = padding
@@ -219,18 +248,36 @@ async def recover_pictures(
     found = await asyncio.to_thread(
         picture_candidates, np.asarray(ocr_image), pictures, recognized, RENDER_DPI
     )
-    raws = await gather_or_cancel([
-        _chat_with_repeat_retry(vllm, Image.fromarray(candidate["image"]), ALL_PROMPT["Text"],
-                                options, repeat_retries, RECOGNITION_MAX_TOKENS, issues=issues)
-        for candidate in found
-    ])
+    raws = await gather_or_cancel(
+        [
+            _chat_with_repeat_retry(
+                vllm,
+                Image.fromarray(candidate["image"]),
+                ALL_PROMPT["Text"],
+                options,
+                repeat_retries,
+                RECOGNITION_MAX_TOKENS,
+                issues=issues,
+            )
+            for candidate in found
+        ]
+    )
     reason = "text_like_ink_in_unrecognized_picture"
     return [
-        {"bbox": candidate["bbox"], "label": "Text", "content": (raw or "").strip(),
-         "config": {"picture_text_recovery": PICTURE_RECOVERY_POLICY,
-                    "picture_text_source": {"picture_block": candidate["picture_block"],
-                                            "bbox": candidate["bbox"], "reason": reason}}}
-        for candidate, raw in zip(found, raws)
+        {
+            "bbox": candidate["bbox"],
+            "label": "Text",
+            "content": (raw or "").strip(),
+            "config": {
+                "picture_text_recovery": PICTURE_RECOVERY_POLICY,
+                "picture_text_source": {
+                    "picture_block": candidate["picture_block"],
+                    "bbox": candidate["bbox"],
+                    "reason": reason,
+                },
+            },
+        }
+        for candidate, raw in zip(found, raws, strict=True)
     ]
 
 
@@ -264,8 +311,16 @@ async def parse_ocr_request(
         if any(not block["content"] for block in recovered):
             issues.append("empty_picture_text_recovery")
         blocks = blocks + recovered
-    return [{**block, "raw_text": block["content"], "source": "ocr", "review": bool(issues),
-             "config": dict(block.get("config", {}))} for block in blocks]
+    return [
+        {
+            **block,
+            "raw_text": block["content"],
+            "source": "ocr",
+            "review": bool(issues),
+            "config": dict(block.get("config", {})),
+        }
+        for block in blocks
+    ]
 
 
 def merge_prediction(page: dict, plan: dict, blocks: list[dict], request: dict) -> None:
@@ -298,12 +353,25 @@ def merge_prediction(page: dict, plan: dict, blocks: list[dict], request: dict) 
         if clipped.get_area() <= 0:
             dropped += 1
             continue
-        config = {"routed_request": request["id"], "source_visual_bbox": request["visual_bbox"],
-                  "masked_native_words": request["masked_native_words"], **block.get("config", {})}
-        additions.append({"bbox": list(clipped), "label": block["label"], "content": block["content"],
-                          "raw_text": block["content"], "source": "ocr",
-                          "review": block.get("review", False) or supplement
-                          or "picture_text_source" in config, "config": config})
+        config = {
+            "routed_request": request["id"],
+            "source_visual_bbox": request["visual_bbox"],
+            "masked_native_words": request["masked_native_words"],
+            **block.get("config", {}),
+        }
+        additions.append(
+            {
+                "bbox": list(clipped),
+                "label": block["label"],
+                "content": block["content"],
+                "raw_text": block["content"],
+                "source": "ocr",
+                "review": block.get("review", False)
+                or supplement
+                or "picture_text_source" in config,
+                "config": config,
+            }
+        )
     page["blocks"].extend(additions)
     page["review"] |= supplement
     request["dropped_spatial_duplicates"] = dropped
@@ -314,13 +382,23 @@ def merge_prediction(page: dict, plan: dict, blocks: list[dict], request: dict) 
 def to_khoi(block: dict, plan: dict, size: tuple[int, int]) -> dict:
     """Routed Khối (unrotated points) -> page_parser Khối (rendered page pixels)."""
     width, height = size
-    x0, y0, x1, y1 = pixel_box(block["bbox"], pymupdf.Matrix(*plan["rotation_matrix"]),
-                               width, height, pymupdf.Rect(0, 0, *plan["rect"]))
+    x0, y0, x1, y1 = pixel_box(
+        block["bbox"],
+        pymupdf.Matrix(*plan["rotation_matrix"]),
+        width,
+        height,
+        pymupdf.Rect(0, 0, *plan["rect"]),
+    )
     # Picture crops need at least one pixel.
     x0, y0 = min(x0, width - 1), min(y0, height - 1)
     x1, y1 = max(x1, x0 + 1), max(y1, y0 + 1)
-    khoi = {"bbox": [x0, y0, x1, y1], "label": block["label"], "content": block["content"],
-            "source": block["source"], "review": block["review"]}
+    khoi = {
+        "bbox": [x0, y0, x1, y1],
+        "label": block["label"],
+        "content": block["content"],
+        "source": block["source"],
+        "review": block["review"],
+    }
     if "format" in block:
         khoi["format"] = block["format"]
     return khoi
@@ -339,8 +417,12 @@ async def parse_routed_page(
     """
     plan = copy.deepcopy(plan)
     routing = plan["routing"]
-    page = {"blocks": plan["blocks"], "routing": routing, "review": plan["review"],
-            "rotation_matrix": plan["rotation_matrix"]}
+    page = {
+        "blocks": plan["blocks"],
+        "routing": routing,
+        "review": plan["review"],
+        "rotation_matrix": plan["rotation_matrix"],
+    }
 
     async def run(index: int, region):
         request, ocr_image = await asyncio.to_thread(prepare_request, image, plan, index, region)
@@ -350,9 +432,9 @@ async def parse_routed_page(
         blocks = await parse_ocr_request(ocr_image, request, vllm, options, repeat_retries)
         return request, blocks
 
-    results = await gather_or_cancel([
-        run(index, region) for index, region in enumerate(plan["regions"], 1)
-    ])
+    results = await gather_or_cancel(
+        [run(index, region) for index, region in enumerate(plan["regions"], 1)]
+    )
     for request, blocks in results:
         routing["requests"].append(request)
         if blocks:
@@ -372,15 +454,27 @@ async def parse_routed_image(
     repeat_retries: int = 0,
 ) -> tuple[list[dict], dict]:
     """An image input has no text layer: the whole page goes through two-stage OCR."""
-    request = {"id": "request-0001", "region": None, "masked_native_words": False,
-               "padding_pixels": 0, "image_size": list(image.size)}
+    request = {
+        "id": "request-0001",
+        "region": None,
+        "masked_native_words": False,
+        "padding_pixels": 0,
+        "image_size": list(image.size),
+    }
     blocks = await parse_ocr_request(image, request, vllm, options, repeat_retries)
     routing = {
-        "decision": "ocr", "reasons": ["image_input_without_text_layer"], "signals": {},
-        "thresholds": asdict(GATE_CONFIG), "near_blank": False, "effective_mode": "full-ocr",
-        "review_reasons": [], "retained_regions": [], "supplement_regions": [],
+        "decision": "ocr",
+        "reasons": ["image_input_without_text_layer"],
+        "signals": {},
+        "thresholds": asdict(GATE_CONFIG),
+        "near_blank": False,
+        "effective_mode": "full-ocr",
+        "review_reasons": [],
+        "retained_regions": [],
+        "supplement_regions": [],
         "requests": [request],
-        "page_type": "scan", "coordinate_unit": "pt",
+        "page_type": "scan",
+        "coordinate_unit": "pt",
     }
     page = {"blocks": blocks, "routing": routing, "review": False}
     annotate(page)

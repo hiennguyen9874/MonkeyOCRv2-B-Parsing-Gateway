@@ -78,7 +78,9 @@ def _image_markdown(path: str, bbox: list[int], page_width: int) -> str:
     # PaddleOCR-VL serving default (prettifyMarkdown=true): PaddleX
     # format_image_scaled_by_html wrapped by format_centered_by_html.
     scale = int((bbox[2] - bbox[0]) / page_width * 100)
-    return f'<div style="text-align: center;"><img src="{path}" alt="Image" width="{scale}%" /></div>'
+    return (
+        f'<div style="text-align: center;"><img src="{path}" alt="Image" width="{scale}%" /></div>'
+    )
 
 
 def _jpeg_base64(image: Image.Image) -> str:
@@ -122,7 +124,11 @@ def build_page_result(
     for index, block in enumerate(blocks):
         label = PADDLE_LABELS.get(block["label"], block["label"])
         content, markdown = _format_block(label, block["content"], block.get("format"))
-        if block["label"] == "Picture" and images is not None and label not in markdown_ignore_labels:
+        if (
+            block["label"] == "Picture"
+            and images is not None
+            and label not in markdown_ignore_labels
+        ):
             x1, y1, x2, y2 = block["bbox"]
             # WeKnora merges page image maps, so bbox-only paths would collide.
             path = f"imgs/page_{page_index + 1}/img_in_{label}_box_{x1}_{y1}_{x2}_{y2}.jpg"

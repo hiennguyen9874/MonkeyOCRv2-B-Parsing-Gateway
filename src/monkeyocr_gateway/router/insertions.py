@@ -37,7 +37,9 @@ def _chars(span):
         return span["chars"]
     text, (x0, y0, x1, y1) = span["text"], span["bbox"]
     width = (x1 - x0) / len(text) if text else 0
-    return [{"c": c, "bbox": (x0 + i * width, y0, x0 + (i + 1) * width, y1)} for i, c in enumerate(text)]
+    return [
+        {"c": c, "bbox": (x0 + i * width, y0, x0 + (i + 1) * width, y1)} for i, c in enumerate(text)
+    ]
 
 
 def _text(span):
@@ -46,7 +48,12 @@ def _text(span):
 
 def _union(boxes):
     boxes = list(boxes)
-    return [min(b[0] for b in boxes), min(b[1] for b in boxes), max(b[2] for b in boxes), max(b[3] for b in boxes)]
+    return [
+        min(b[0] for b in boxes),
+        min(b[1] for b in boxes),
+        max(b[2] for b in boxes),
+        max(b[3] for b in boxes),
+    ]
 
 
 def _vertical_overlap(a, b):
@@ -62,8 +69,10 @@ def _relation(span, line, ink):
         return None
     if not ink:
         return None
-    if not (min(c["bbox"][0] for c in ink) - TOLERANCE <= box[0]
-            and box[2] <= max(c["bbox"][2] for c in ink) + TOLERANCE):
+    if not (
+        min(c["bbox"][0] for c in ink) - TOLERANCE <= box[0]
+        and box[2] <= max(c["bbox"][2] for c in ink) + TOLERANCE
+    ):
         return None
     # Glyph boxes include side bearings and stamped numbers are not aligned to the blank, so a host glyph
     # may stick into the span from the outside by a little (e.g. the "/" after "6240"). Any other overlap
@@ -74,13 +83,20 @@ def _relation(span, line, ink):
         overlap = min(box[2], x1) - max(box[0], x0)
         if overlap <= 0:
             continue
-        if not (overlap <= allowance and (x0 < box[0] < x1 <= box[2] or box[0] <= x0 < box[2] < x1)):
+        if not (
+            overlap <= allowance and (x0 < box[0] < x1 <= box[2] or box[0] <= x0 < box[2] < x1)
+        ):
             return "overlaps_text"
     return "placeable"
 
 
 def _part(span, chars):
-    return {**span, "chars": chars, "text": "".join(c["c"] for c in chars), "bbox": _union(c["bbox"] for c in chars)}
+    return {
+        **span,
+        "chars": chars,
+        "text": "".join(c["c"] for c in chars),
+        "bbox": _union(c["bbox"] for c in chars),
+    }
 
 
 def _insert(line, span):
@@ -97,8 +113,10 @@ def _insert(line, span):
             (left if (s["bbox"][0] + s["bbox"][2]) / 2 < centre else right).append(s)
             continue
         chars = _chars(s)
-        for side, part in ((left, [c for c in chars if (c["bbox"][0] + c["bbox"][2]) / 2 < centre]),
-                           (right, [c for c in chars if (c["bbox"][0] + c["bbox"][2]) / 2 >= centre])):
+        for side, part in (
+            (left, [c for c in chars if (c["bbox"][0] + c["bbox"][2]) / 2 < centre]),
+            (right, [c for c in chars if (c["bbox"][0] + c["bbox"][2]) / 2 >= centre]),
+        ):
             if part:
                 side.append(_part(s, part))
     size = span.get("size") or (span["bbox"][3] - span["bbox"][1])
@@ -124,7 +142,11 @@ def _insert(line, span):
 
     before, after = trim(left, -1), trim(right, 0)
     text = span["text"].strip()
-    moved = {**span, "text": (" " if before else "") + text + (" " if after else ""), "_inserted": True}
+    moved = {
+        **span,
+        "text": (" " if before else "") + text + (" " if after else ""),
+        "_inserted": True,
+    }
     line["spans"] = left + [moved] + right
     line["bbox"] = _union([line["bbox"], span["bbox"]])
 
@@ -146,14 +168,21 @@ def reorder(raw):
                 span["text"] = _text(span)
             lines.append(line)
     moves, unplaced, unplaced_spans = [], [], []
-    ink = {id(line): [c for s in line["spans"] if _visible(s) for c in _chars(s) if not _space(c["c"])]
-           for line in lines}
+    ink = {
+        id(line): [c for s in line["spans"] if _visible(s) for c in _chars(s) if not _space(c["c"])]
+        for line in lines
+    }
     for line in lines:
         for span in line["spans"]:
             if not span["text"].strip() or not _visible(span):
                 continue
-            relations = [(host, r) for host in lines if host is not line
-                         for r in [_relation(span, host, ink[id(host)])] if r]
+            relations = [
+                (host, r)
+                for host in lines
+                if host is not line
+                for r in [_relation(span, host, ink[id(host)])]
+                if r
+            ]
             if not relations:
                 continue
             record = {"text": span["text"].strip(), "bbox": [round(v, 2) for v in span["bbox"]]}
@@ -169,7 +198,13 @@ def reorder(raw):
     hosts = {id(host) for _, _, host, _ in moves}
     blocked = [m for m in moves if id(m[1]) in hosts]
     for span, line, host, record in blocked:
-        unplaced.append({**record, "reason": "chained", "hosts": ["".join(s["text"] for s in host["spans"]).strip()]})
+        unplaced.append(
+            {
+                **record,
+                "reason": "chained",
+                "hosts": ["".join(s["text"] for s in host["spans"]).strip()],
+            }
+        )
         unplaced_spans.append(span)
     moves = [m for m in moves if id(m[1]) not in hosts]
     report = {"moved": [], "unplaced": unplaced}
@@ -178,7 +213,9 @@ def reorder(raw):
         line["spans"] = [s for s in line["spans"] if s is not span]
         _insert(host, span)
         touched.update((id(line), id(host)))
-        report["moved"].append({**record, "host": "".join(s["text"] for s in host["spans"]).strip()})
+        report["moved"].append(
+            {**record, "host": "".join(s["text"] for s in host["spans"]).strip()}
+        )
     for span in (s for line in lines for s in line["spans"]):
         if span.pop("_inserted", None):
             span["insertion"] = "moved"
@@ -188,8 +225,11 @@ def reorder(raw):
         for block in raw["blocks"]:
             if block["type"] != 0 or not any(id(l) in touched for l in block["lines"]):
                 continue
-            block["lines"] = [l for l in block["lines"]
-                              if id(l) not in touched or any(s["text"].strip() for s in l["spans"])]
+            block["lines"] = [
+                l
+                for l in block["lines"]
+                if id(l) not in touched or any(s["text"].strip() for s in l["spans"])
+            ]
             for l in block["lines"]:
                 if id(l) in touched:
                     l["bbox"] = _union([s["bbox"] for s in l["spans"]])
@@ -200,8 +240,14 @@ def reorder(raw):
 
 
 def moved_spans(raw):
-    return [s for b in raw["blocks"] if b["type"] == 0 for l in b["lines"] for s in l["spans"]
-            if s.get("insertion") == "moved"]
+    return [
+        s
+        for b in raw["blocks"]
+        if b["type"] == 0
+        for l in b["lines"]
+        for s in l["spans"]
+        if s.get("insertion") == "moved"
+    ]
 
 
 def needs_review(lines):
@@ -225,7 +271,10 @@ def cell_text(raw, cell):
             text = ""
             for span in line["spans"]:
                 if span.get("insertion") == "moved":
-                    x, y = (span["bbox"][0] + span["bbox"][2]) / 2, (span["bbox"][1] + span["bbox"][3]) / 2
+                    x, y = (
+                        (span["bbox"][0] + span["bbox"][2]) / 2,
+                        (span["bbox"][1] + span["bbox"][3]) / 2,
+                    )
                     text += span["text"] if rect.contains(pymupdf.Point(x, y)) else ""
                     continue
                 for c in _chars(span):

@@ -16,9 +16,9 @@ from pydantic import BaseModel, ConfigDict, FiniteFloat
 
 from .config import PARSING_MODES, Settings
 from .document_loader import DocumentError, open_document, read_file
+from .paddle_response import build_page_result, DEFAULT_MARKDOWN_IGNORE_LABELS
 from .page_parser import gather_or_cancel, parse_page
-from .paddle_response import DEFAULT_MARKDOWN_IGNORE_LABELS, build_page_result
-from .routed import PAGE_ROUTER_SETTINGS, NativeDocument, parse_routed_image, parse_routed_page
+from .routed import NativeDocument, PAGE_ROUTER_SETTINGS, parse_routed_image, parse_routed_page
 from .vllm_client import GenerationOptions, VLLMClient, VLLMError
 
 # Preprocessing changes the coordinate space of the result, so it is rejected
@@ -231,8 +231,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     blocks = await parse_page(image, mode, app.state.vllm, options, repeat_retries)
                 # Crop and encode before releasing the page concurrency slot.
                 return await asyncio.to_thread(
-                    build_page_result, image, blocks, model_settings, page_count,
-                    index, body.returnMarkdownImages, routing,
+                    build_page_result,
+                    image,
+                    blocks,
+                    model_settings,
+                    page_count,
+                    index,
+                    body.returnMarkdownImages,
+                    routing,
                 )
 
         try:
@@ -254,14 +260,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "type": "pdf",
                 "numPages": document.page_count,
                 "pages": [
-                    {"width": page["prunedResult"]["width"], "height": page["prunedResult"]["height"]}
+                    {
+                        "width": page["prunedResult"]["width"],
+                        "height": page["prunedResult"]["height"],
+                    }
                     for page in pages
                 ],
             }
         else:
             # A multi-frame TIFF is described by its first frame.
             first_page = pages[0]["prunedResult"]
-            data_info = {"type": "image", "width": first_page["width"], "height": first_page["height"]}
+            data_info = {
+                "type": "image",
+                "width": first_page["width"],
+                "height": first_page["height"],
+            }
         return {
             "logId": log_id,
             "errorCode": 0,

@@ -8,12 +8,18 @@ import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
+from conftest import image_base64
 from fastapi.testclient import TestClient
 from PIL import Image
+from test_multi_page import (  # noqa: F401 - fixture
+    _contents,
+    _pages,
+    _pdf_base64,
+    _tiff_base64,
+    fake_vllm,
+)
 
-from conftest import image_base64
 from monkeyocr_gateway.app import create_app
-from test_multi_page import _contents, _pages, _pdf_base64, _tiff_base64, fake_vllm  # noqa: F401 - fixture
 
 
 class FileServer:

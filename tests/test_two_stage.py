@@ -3,19 +3,19 @@
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
-from PIL import Image, ImageChops, ImageDraw
-
 from conftest import (
     END2END_PROMPT,
     FORMULA_PROMPT,
+    image_base64,
     LAYOUT_PROMPT,
+    recorded,
     TABLE_PROMPT,
     TEXT_PROMPT,
-    image_base64,
-    recorded,
 )
 from fake_vllm import FakeVLLM, request_image, request_prompt
+from fastapi.testclient import TestClient
+from PIL import Image, ImageChops, ImageDraw
+
 from monkeyocr_gateway.app import create_app
 
 PAGE_SIZE = (1240, 1754)

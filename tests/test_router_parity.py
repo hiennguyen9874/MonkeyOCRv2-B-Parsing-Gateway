@@ -14,26 +14,26 @@ from unittest.mock import AsyncMock, patch
 import numpy as np
 import pymupdf
 import pytest
+from router_pdfs import diagram, insertion_page, table_pdf
 
+from monkeyocr_gateway.routed import native_block, parse_ocr_request
 from monkeyocr_gateway.router.canonical import validate_page
 from monkeyocr_gateway.router.gate import assess, merged_regions
 from monkeyocr_gateway.router.insertions import reorder
 from monkeyocr_gateway.router.native import PyMuPDFAdapter
 from monkeyocr_gateway.router.native_tables import (
-    PyMuPDFTablesAdapter,
     _cells,
     clean_grid,
     compare,
     ends_with_table,
     first_row_continues,
+    PyMuPDFTablesAdapter,
     shape_problem,
 )
 from monkeyocr_gateway.router.picture_recovery import candidates
 from monkeyocr_gateway.router.review import annotate, spatial_merge
 from monkeyocr_gateway.router.views import cell_display, table_html
-from monkeyocr_gateway.routed import native_block, parse_ocr_request
 from monkeyocr_gateway.vllm_client import GenerationOptions
-from router_pdfs import diagram, insertion_page, table_pdf
 
 FILE = {"path": "t.pdf", "sha256": "a" * 64}
 
