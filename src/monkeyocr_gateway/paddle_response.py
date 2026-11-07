@@ -44,8 +44,13 @@ def _collapse_soft_newlines(text: str) -> str:
     return text.replace("-\n", "").replace("\n", " ")
 
 
-def _format_block(label: str, raw: str) -> tuple[str, str]:
-    """Nhãn Paddle + raw Monkey content -> (block_content, Markdown fragment)."""
+def _format_block(label: str, raw: str, content_format: str | None = None) -> tuple[str, str]:
+    """Nhãn Paddle + raw Monkey content -> (block_content, Markdown fragment).
+
+    content_format "html" marks a table that is already HTML (native tables of
+    routed mode, ADR-0007); it is passed through instead of read as OTSL."""
+    if label == "table" and content_format == "html":
+        return raw, raw
     if label == "table":
         html = otsl_to_html(raw)
         return html, html
@@ -89,9 +94,14 @@ def build_page_result(
     page_count: int | None,
     page_index: int,
     return_markdown_images: bool,
+    routing: dict | None = None,
 ) -> dict:
     """blocks are page_parser Khối in reading order: {"bbox", "label" (Nhãn Monkey),
     "content" (raw)}. Picture crops come from the full-resolution page here.
+
+    Routed Khối (ADR-0007) may also carry "format" ("html" for native tables),
+    "source" and "review"; the last two go to parsing_res_list as block_source
+    and block_review.
 
     page_count is the PDF page count, or None for image input, as in PaddleOCR-VL.
 
@@ -101,6 +111,8 @@ def build_page_result(
     Picture crops go to markdown.images as Base64 JPEG under a Paddle-style path
     that the Markdown references. markdown.images holds only referenced crops; with
     return_markdown_images False it is None and the Markdown has no image reference.
+
+    routing, the page routing evidence of routed mode, goes to prunedResult.routing.
     """
     width, height = page.size
     markdown_ignore_labels = model_settings["markdown_ignore_labels"]
@@ -109,7 +121,7 @@ def build_page_result(
     images = {} if return_markdown_images else None
     for index, block in enumerate(blocks):
         label = PADDLE_LABELS.get(block["label"], block["label"])
-        content, markdown = _format_block(label, block["content"])
+        content, markdown = _format_block(label, block["content"], block.get("format"))
         if block["label"] == "Picture" and images is not None and label not in markdown_ignore_labels:
             x1, y1, x2, y2 = block["bbox"]
             # WeKnora merges page image maps, so bbox-only paths would collide.
@@ -117,24 +129,31 @@ def build_page_result(
             with page.crop(tuple(block["bbox"])) as crop:
                 images[path] = _jpeg_base64(crop)
             markdown = _image_markdown(path, block["bbox"], width)
-        parsing_res_list.append({
+        item = {
             "block_label": label,
             "monkey_label": block["label"],
             "block_content": content,
             "block_bbox": block["bbox"],
             "block_id": index,
             "block_order": index + 1,
-        })
+        }
+        if "source" in block:
+            item["block_source"] = block["source"]
+            item["block_review"] = block["review"]
+        parsing_res_list.append(item)
         if markdown and label not in markdown_ignore_labels:
             fragments.append(markdown)
+    pruned_result = {
+        "page_count": page_count,
+        "width": width,
+        "height": height,
+        "model_settings": model_settings,
+        "parsing_res_list": parsing_res_list,
+    }
+    if routing is not None:
+        pruned_result["routing"] = routing
     return {
-        "prunedResult": {
-            "page_count": page_count,
-            "width": width,
-            "height": height,
-            "model_settings": model_settings,
-            "parsing_res_list": parsing_res_list,
-        },
+        "prunedResult": pruned_result,
         "markdown": {
             # Upstream result2md drops U+FFFD from the Markdown.
             "text": "\n\n".join(fragments).replace("\ufffd", ""),

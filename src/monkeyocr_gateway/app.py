@@ -18,6 +18,7 @@ from .config import PARSING_MODES, Settings
 from .document_loader import DocumentError, open_document, read_file
 from .page_parser import gather_or_cancel, parse_page
 from .paddle_response import DEFAULT_MARKDOWN_IGNORE_LABELS, build_page_result
+from .routed import PAGE_ROUTER_SETTINGS, NativeDocument, parse_routed_image, parse_routed_page
 from .vllm_client import GenerationOptions, VLLMClient, VLLMError
 
 # Preprocessing changes the coordinate space of the result, so it is rejected
@@ -46,7 +47,7 @@ class LayoutParsingRequest(BaseModel):
 
 def _model_settings(markdown_ignore_labels: list[str], mode: str) -> dict:
     """What the gateway actually does, whatever the request asked for (ADR-0002)."""
-    return {
+    settings = {
         "use_doc_preprocessor": False,
         "use_layout_detection": True,
         "use_chart_recognition": False,
@@ -58,6 +59,9 @@ def _model_settings(markdown_ignore_labels: list[str], mode: str) -> dict:
         "markdown_ignore_labels": markdown_ignore_labels,
         "parsing_mode": mode,
     }
+    if mode == "routed":
+        settings["page_router"] = PAGE_ROUTER_SETTINGS
+    return settings
 
 
 def _new_log_id() -> str:
@@ -179,7 +183,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             return _error_response(
                 log_id,
                 422,
-                f"Invalid vlmExtraArgs.parsingMode {mode!r}; expected 'two-stage' or 'end-to-end'",
+                f"Invalid vlmExtraArgs.parsingMode {mode!r}; expected 'two-stage', 'end-to-end' or 'routed'",
             )
         async with app.state.request_slots:
             try:
@@ -208,21 +212,42 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         page_count = document.page_count if document.kind == "pdf" else None
         semaphore = asyncio.Semaphore(settings.page_concurrency)
         repeat_retries = settings.retry_repeat_max_retries if settings.retry_repeat else 0
+        native = None
 
         async def parse(index: int):
             async with semaphore:
                 image = await asyncio.to_thread(document.page, index)
-                blocks = await parse_page(image, mode, app.state.vllm, options, repeat_retries)
+                routing = None
+                if native is not None:
+                    plan = await asyncio.to_thread(native.plan, index)
+                    blocks, routing = await parse_routed_page(
+                        image, plan, app.state.vllm, options, repeat_retries
+                    )
+                elif mode == "routed":
+                    blocks, routing = await parse_routed_image(
+                        image, app.state.vllm, options, repeat_retries
+                    )
+                else:
+                    blocks = await parse_page(image, mode, app.state.vllm, options, repeat_retries)
                 # Crop and encode before releasing the page concurrency slot.
                 return await asyncio.to_thread(
                     build_page_result, image, blocks, model_settings, page_count,
-                    index, body.returnMarkdownImages,
+                    index, body.returnMarkdownImages, routing,
                 )
 
         try:
+            if mode == "routed" and document.kind == "pdf":
+                # The embedded text layer is read with PyMuPDF (ADR-0007).
+                native = await asyncio.to_thread(NativeDocument, data)
+                if native.page_count != document.page_count:
+                    raise DocumentError(
+                        422, "file is not a readable PDF: page count differs between PDF readers"
+                    )
             pages = await gather_or_cancel([parse(index) for index in range(document.page_count)])
         finally:
             await asyncio.to_thread(document.close)
+            if native is not None:
+                await asyncio.to_thread(native.close)
 
         if document.kind == "pdf":
             data_info = {

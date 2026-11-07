@@ -12,6 +12,18 @@ _Avoid_: layout mode, pipeline mặc định
 Cách phân tích trang bằng một lần suy luận duy nhất trả về đồng thời loại, tọa độ và nội dung của mọi Khối.
 _Avoid_: end2end, single-pass
 
+**Chế độ định tuyến theo trang** (routed mode):
+Cách phân tích PDF quyết định riêng từng trang: dùng Lớp chữ có sẵn khi qua quality gate, chỉ gửi trang hoặc vùng ảnh không tin được sang Chế độ hai giai đoạn.
+_Avoid_: hybrid mode, native mode
+
+**Lớp chữ có sẵn** (embedded text layer):
+Chữ nhúng trong PDF mà PyMuPDF trích được, không qua OCR; có thể ẩn, hỏng hoặc bị che nên phải qua quality gate.
+_Avoid_: native text (khi nói chung), text PDF
+
+**OCR bổ sung** (supplemental OCR):
+Request OCR cho một vùng ảnh trên trang đã qua quality gate, với chữ có sẵn đã bị che trắng; kết quả luôn cần review.
+_Avoid_: partial OCR
+
 ## Trang và Khối
 
 **Khối**:

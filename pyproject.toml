@@ -6,7 +6,9 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
     "fastapi",
     "httpx",
+    "numpy>=2,<3",
     "pillow",
+    "pymupdf>=1.26,<2",
     "pypdfium2",
     "uvicorn",
 ]

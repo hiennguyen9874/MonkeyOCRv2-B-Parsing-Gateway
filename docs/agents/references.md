@@ -43,3 +43,4 @@ The same model and code were validated here, including the two-stage run (40/40 
 - `/home/jovyan/workspace/ocr/legal-vi-ocr/src/legal_vi_ocr/monkey_two_stage_run.py`: calls Upstream `get_layout` → `_build_page_tasks` → `_recognize_one_block` in sequence.
 - `/home/jovyan/workspace/ocr/legal-vi-ocr/src/legal_vi_ocr/paddle_monkey.py`: `LABELS` maps Nhãn Paddle → Nhãn Monkey, the reverse of the mapping the gateway needs.
 - `/home/jovyan/workspace/ocr/legal-vi-ocr/outputs/runs/2026-10-29/paddleocr-vl/`: real PaddleOCR-VL `prunedResult` (`*.raw.json`). Use it to settle format questions; the content is sensitive.
+- `/home/jovyan/workspace/ocr/legal-vi-ocr/docs/page-router-architecture.md` and `src/legal_vi_ocr/{router,routed_run,routing_review,native,native_tables,insertions,picture_recovery}.py` at `6e7ad59`: the source of routed mode (`src/monkeyocr_gateway/router/`, ADR-0007).

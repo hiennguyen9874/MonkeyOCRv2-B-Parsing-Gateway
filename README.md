@@ -132,7 +132,7 @@ To compare both backends on synthetic pages in both modes, see the [manual GPU c
 
 ## Configuration and tests
 
-Two-stage parsing is the default. Set `MOCR2_PARSING_MODE=end-to-end` to change the default, or send `vlmExtraArgs.parsingMode` per request. URL input is disabled unless its host and every redirect host are in `MOCR2_URL_ALLOWLIST`; base64 input does not require an allowlist. Document orientation and unwarping are not supported.
+Two-stage parsing is the default. Set `MOCR2_PARSING_MODE=end-to-end` or `routed` to change the default, or send `vlmExtraArgs.parsingMode` per request. `routed` uses each PDF page's embedded text layer when it passes a quality gate and sends only untrusted pages or uncovered image regions to two-stage OCR; it adds `prunedResult.routing` with the decision and review reasons. See [docs/page-router.md](docs/page-router.md). URL input is disabled unless its host and every redirect host are in `MOCR2_URL_ALLOWLIST`; base64 input does not require an allowlist. Document orientation and unwarping are not supported.
 
 See [AGENTS.md](AGENTS.md) for environment settings and [docs/paddleocr-api.md](docs/paddleocr-api.md) for the HTTP contract.
 
